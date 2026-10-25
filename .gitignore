@@ -1,68 +1,29 @@
-# Prerequisites
-*.d
+# Out-of-source CMake builds and firmware artifacts.
+/build/
+/build-*/
+/cmake-build-*/
+/CMakeUserPresets.json
+/compile_commands.json
+*.elf
+*.uf2
+*.bin
+*.hex
+*.map
 
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Linker files
-*.ilk
-
-# Debugger Files
-*.pdb
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-*.so.*
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# Build directories
-build/
-Build/
-build-*/
-
-# CMake generated files
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-Makefile
-install_manifest.txt
-compile_commands.json
-
-# Temporary files
-*.tmp
-*.log
-*.bak
+# Local editor state; share the Pico build/debug configuration.
+/.vscode/*
+!/.vscode/c_cpp_properties.json
+!/.vscode/cmake-kits.json
+!/.vscode/extensions.json
+!/.vscode/launch.json
+!/.vscode/settings.json
+!/.vscode/tasks.json
+/.idea/
 *.swp
+*.swo
+*~
 
-# vcpkg
-vcpkg_installed/
-
-# debug information files
-*.dwo
-
-# test output & cache
-Testing/
-.cache/
+# Operating system metadata.
+.DS_Store
+Thumbs.db
+Desktop.ini

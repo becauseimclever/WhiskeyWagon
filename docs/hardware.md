@@ -2,11 +2,13 @@
 
 ## Wiring status
 
-**Physical wiring is not yet confirmed.** GP0/GP1 are reserved for UART0.
-The driver and encoder GPIO plan below is allocated for the Pico W baseline;
-it is documentation only and is not implemented by the firmware. Confirm the
-physical board, breakout labels, signal levels, and power design before connecting
-or energizing hardware.
+**Owner-reported wiring, 2026-10-25:** Pico W; GP6/GP7 to AIN1/AIN2,
+GP8/GP9 to BIN1/BIN2, GP14 to STBY, shared ground, VM disconnected.
+Motors, encoders, and batteries remain disconnected. Board revision, electrical
+levels, STBY compatibility, and reset biasing have not been measured.
+GP0/GP1 are reserved for UART0. The inhibited-only firmware implements the driver
+pin assignments as constant-low outputs; it does not configure servo or encoder
+pins. Keep VM disconnected until the electrical and power gates are resolved.
 
 Use RP2040 GPIO numbers (`GPn`) and physical Pico header pin numbers in separate
 columns. Record connector position, wire label, and electrical interface when
@@ -16,21 +18,25 @@ assigning a signal. Never substitute a header number for a GPIO number.
 
 | Component | Quantity | Confirmed | Still required |
 | --- | --- | --- | --- |
-| Pico-family wireless controller | 1 | Pico W is the current build baseline | Physical model/revision |
+| Pico-family wireless controller | 1 | Owner-confirmed Pico W, 2026-10-25 | Physical revision |
+| 8BitDo Micro Bluetooth gamepad | 1 | Owner-selected 2026-10-25, Amazon ASIN B0CDG5HCCH | Firmware version, selected operating mode, observed Bluetooth transport, Bluepad32 compatibility and button mapping |
 | TowerPro SG92R micro steering servo | 1 | Owner-confirmed model; manufacturer specifies 4.8 V operation | Peak/stall current, signal compatibility, pulse range, linkage limits |
-| Geared DC motor with Hall encoder | 2 | Selected listing B0H7MZVZ3J: GA25-370, 6 V, 171:1 reduction, 35 rpm +/-15% no-load, listed 8 W; channel A = left wheel, channel B = right wheel | Resolve earlier owner model GA24-370 versus listing GA25-370; running/stall current, torque, forward polarity, actual unit specifications |
+| Geared DC motor with Hall encoder | 2 | Owner confirms GA25-370, 6 V, 0.15 A running / 0.5 A stall each (2026-10-25); 171:1; listing B0H7MZVZ3J: 35 rpm +/-15% no-load, 8 W; A = left, B = right | Torque, forward polarity, current under actual load and encoder specifications |
 | HiLetgo DRV8833 dual H-bridge breakout | 1 from a 3-pack | Owner-specified product: Amazon ASIN B00UYIFYCW; STBY and VM exposed, nSLEEP/nFAULT not exposed | Actual PCB revision/IC marking, schematic, 3.3 V STBY compatibility, thermal limits, current-limit configuration |
 | Motor Hall encoders | 2 sensors per motor, 4 total | Hall-effect switches; two signal channels per motor | Model, supply/output voltage, electrical output type, phase relationship, counts |
 | LiPo battery pack | 1 | Owner-selected Amazon ASIN B0FB93HWMJ; owner-specified 2S1P, 7.4 V nominal, 1200 mAh | Discharge rating, connector/polarity, protection, charger, actual full-charge/cutoff specifications |
-| Buck converters, protection, disconnect | TBD | Converter selection pending | Rail design, load budget, thermal validation, low-voltage protection, fuse/disconnect |
+| Buck converters, protection, disconnect | 2 converters planned | Approved rail targets: 6 V motors, 4.8 V shared Pico/servo; ideal rails assumed for software | Actual converter selection, load budget, thermal validation, low-voltage protection, fuse/disconnect |
 
 ## Authoritative GPIO allocation
 
 The UART reservation and motor/channel identity are confirmed requirements.
 The selected driver, encoder, and servo GPIOs form wiring plan **P1**; they are not
-verified wiring. GP14 is conditionally reserved for the exposed STBY pin until
-its electrical behavior is verified. nSLEEP and nFAULT are not exposed; their
-previous reservations are superseded. GP15 is now unassigned.
+electrically verified wiring. Driver wiring is owner-reported as above; servo and
+encoder allocations remain plans. GP14 is wired to STBY but is only driven low
+by the baseline; enabling it remains blocked on electrical verification.
+nSLEEP and nFAULT are not exposed; their
+previous reservations are superseded. GP15 is now allocated to the approved
+pairing/wake momentary button, not a driver fault signal.
 `TBD` means no pin is reserved.
 
 | Feature / signal | Direction at Pico | GPIO | Header pin | Interface / allocation constraint |
@@ -40,26 +46,38 @@ previous reservations are superseded. GP15 is now unassigned.
 | Left motor / DRV8833 AIN2 | Output | GP7 | 10 | PWM slice 3, channel B |
 | Right motor / DRV8833 BIN1 | Output | GP8 | 11 | PWM slice 4, channel A |
 | Right motor / DRV8833 BIN2 | Output | GP9 | 12 | PWM slice 4, channel B |
-| Breakout STBY | Output (planned) | GP14 | 19 | Vendor: low/floating disables, high enables; verify 3.3 V compatibility, biasing, and reset behavior before connecting |
+| Breakout STBY | Output, low only | GP14 | 19 | Owner reports connected; verify 3.3 V compatibility, biasing, and reset behavior before powered testing |
 | Left encoder channel A (sensor 1) | Input | GP10 | 14 | Hall switch output; electrical interface TBD |
 | Left encoder channel B (sensor 2) | Input | GP11 | 15 | Hall switch output; verify phase relationship |
 | Right encoder channel A (sensor 1) | Input | GP12 | 16 | Hall switch output; electrical interface TBD |
 | Right encoder channel B (sensor 2) | Input | GP13 | 17 | Hall switch output; verify phase relationship |
 | Diagnostic UART0 TX | Output | GP0 | 1 | Reserved; 3.3 V logic UART, not RS-232 |
 | Diagnostic UART0 RX | Input | GP1 | 2 | Reserved; 3.3 V logic UART, not RS-232 |
+| Pairing / wake button | Input | GP15 | 20 | Approved normally-open momentary to GND, internal pull-up, 30 ms debounce; 2 s hold pairs, short press/release wakes by reboot; physical wiring unverified |
 
 Left/right are defined looking forward in the wagon's normal direction of travel.
 DRV8833 channel A drives the left wheel; channel B drives the right wheel.
 Encoder channel A/B identifies sensors on a motor, not DRV8833 bridge identity.
 Bluetooth uses the Pico W's on-board wireless hardware, not an external UART
-Bluetooth module; no user header GPIO is allocated to Bluetooth here.
+Bluetooth module; the radio needs no user header GPIO. The required pairing
+button is a separate user input on GP15.
+
+### Bench encoder capture gate
+
+Encoder interface remains unidentified. Default firmware leaves GP10-GP13
+unconfigured; do not connect unknown-voltage sensor outputs.
+Only after verifying a 3.3 V-safe interface and any required external pull-ups,
+enable `WHISKEY_ENCODER_CAPTURE_VERIFIED` in a separate build. Capture enables
+both-edge GPIO IRQs with internal pulls disabled. Logs provide raw A/B edge
+counts and tentative x4 transitions without asserting quadrature or RPM.
+Motor inputs and STBY remain low in both variants.
 
 ### Breakout control and supply pins
 
 | Breakout label | Recorded function | Wiring status |
 | --- | --- | --- |
 | VM | Motor voltage supply input | Connect only to the approved motor supply; voltage/current design remains TBD |
-| STBY | Vendor-described enable: low/floating disables outputs, high enables | GP14 reserved conditionally; verify 3.3 V logic compatibility and actual board biasing before connecting |
+| STBY | Vendor-described enable: low/floating disables outputs, high enables | Owner reports GP14 connected; baseline drives low; 3.3 V compatibility and board biasing unverified |
 | nSLEEP | Not exposed | No direct connection planned |
 | nFAULT | Not exposed | No fault GPIO available; GP15 released |
 
@@ -85,8 +103,9 @@ not a schematic or a measurement of the actual board.
   based on that text. Confirm labels and connections on the actual PCB.
 
 Record the actual PCB revision and readable IC marking and obtain a schematic
-if available. Verify 3.3 V STBY compatibility and any on-board pull-ups before
-wiring GP14. Never apply 5 V to a Pico GPIO. The intended future policy is to hold
+if available. GP14 is now owner-reported as wired; verify 3.3 V STBY compatibility
+and any on-board pull-ups before powered testing. Never apply 5 V to a Pico GPIO.
+The intended future policy is to hold
 STBY low while disarmed and enable it only after initialization and deliberate
 arming; reset behavior must be tested before adopting this policy.
 No direct hardware-fault reporting is available through this breakout; software
@@ -141,18 +160,20 @@ open-drain, or push-pull. Specify sensor power and any 3.3 V pull-ups or level
 translation from the actual part data before connecting outputs to the Pico.
 Do not assume these electronic switches behave like passive dry contacts.
 
-### Existing demonstration pin usage
+### Diagnostic UART usage
 
-The [current source](../src/main.cpp) and Pico W stdio defaults use:
+The [current source](../src/main.cpp) initializes UART output only:
 
-| Demonstration function | GPIO | Pico W header pin | Status |
+| Diagnostic function | GPIO | Pico W header pin | Status |
 | --- | --- | --- | --- |
-| UART0 stdio TX / RX | GP0 / GP1 | 1 / 2 | Current SDK default |
-| UART1 greeting TX / RX | GP4 / GP5 | 6 / 7 | Explicitly configured in current source |
+| UART0 stdio TX | GP0 | 1 | Output-only development logs, 115200 baud, 8N1, 3.3 V logic |
+| UART0 RX reservation | GP1 | 2 | Reserved, not initialized; no command input |
+| UART1 TX / RX | GP4 / GP5 | 6 / 7 | Not initialized |
 
-These are software uses only, with no wiring confirmed. UART0 agrees with the
-reservation above. GP4/GP5 remain in use by the UART1 demo and are deliberately
-excluded from plan P1. Steering uses GP2 on PWM slice 1, without conflicting
+Diagnostic adapter wiring is not confirmed. Connect Pico GP0 to a 3.3 V adapter's
+RX and share ground; leave adapter TX and supply pins disconnected.
+UART0 agrees with the reservation above. GP4/GP5 are unused by this baseline.
+Steering uses GP2 on PWM slice 1, without conflicting
 with either UART or motor slices 3 and 4.
 
 ## Allocation rules
@@ -217,8 +238,12 @@ from the motor/encoder wire color standard.
 
 ## Power and wiring constraints
 
-The power design is **TBD**. Do not power motors or the servo from Pico GPIO or
-assume the Pico 3V3 rail can supply them.
+The software power model assumes regulated 6 V and 4.8 V rails from two buck
+converters. Physical implementation and approval remain pending. Battery is the
+only normal operating source and charging is external to the wagon. USB is for
+firmware updates (and the separate existing USB-only bench procedure), not normal
+operation. Do not power motors or the servo from Pico GPIO or assume the Pico 3V3
+rail can supply them.
 
 ### Selected motor listing
 
@@ -227,20 +252,28 @@ B0H7MZVZ3J](https://www.amazon.com/dp/B0H7MZVZ3J), reviewed 2026-10-24.
 
 | Specification | Listing value / qualification |
 | --- | --- |
-| Model | GA25-370; differs from the owner's earlier GA24-370 identification; actual model remains to be confirmed |
+| Model | GA25-370; owner confirmed 2026-10-25, superseding earlier GA24-370 identification |
 | Rated voltage | DC 6 V |
 | Gear reduction | 171:1 |
 | No-load gearbox output speed | 35 rpm +/-15% (29.75-40.25 rpm); not a loaded speed guarantee |
 | Power | 8 W advertised; electrical input versus mechanical output and operating conditions unspecified |
 | Output shaft | 4 mm diameter, 12 mm length |
 | Motor diameter / total length | 25 mm / 74.8 mm |
-| Running and stall current | Not provided |
-| Encoder supply, output interface, resolution, shaft location | Not provided |
+| Running and stall current | Owner-supplied 2026-10-25: 0.15 A running / 0.5 A stall per motor; not measured wagon values |
+| Encoder supply, output interface, resolution | Not provided; tests required |
+| Encoder shaft location | Owner-confirmed motor shaft, before 171:1 gearbox (2026-10-25) |
 
 Do not interpret 8 W / 6 V (about 1.33 A) as a specified running or stall
 current. That calculation assumes electrical input power at a defined operating
 point, which the listing does not establish, and does not cover startup/stall
 transients. Converter sizing and DRV8833 suitability remain unresolved.
+
+Using the owner-supplied motor ratings, both motors total 0.30 A running or
+1.0 A stalled at their rated voltage; these arithmetic totals are not converter
+ratings or permission to stall the motors. Validate actual current, transient
+margin, current limiting and breakout cooling before powered acceptance.
+The owner quotes a 2 A DRV8833 maximum; a maximum/peak specification does not
+establish continuous output capability for the actual breakout.
 
 ### Battery and regulator selection
 
@@ -254,8 +287,9 @@ actual pack/charger specification. Nominal voltage is not the converter's maximu
 input requirement. Capacity in mAh does not establish continuous or peak current
 capability; discharge rating and protection behavior remain TBD.
 
-No converter is selected yet. The following are selection requirements/proposals,
-not an approved power schematic:
+Two buck converters are the approved software power assumption, with regulated
+6 V and 4.8 V outputs. No converter model is selected yet. The following are
+physical selection requirements, not an approved power schematic:
 
 | Rail / load | Intended supply | Requirements still to resolve |
 | --- | --- | --- |
@@ -264,8 +298,8 @@ not an approved power schematic:
 | Pico W VSYS (physical pin 39) | Same proposed 4.8 V buck, via its own isolated supply branch | Stay within VSYS 1.8-5.5 V, validate servo/wireless transients, implement USB/external supply isolation |
 | Encoders | Planned 3.3 V rail | Verify sensor compatibility and available current; never use VM as encoder power |
 
-The latest proposal uses two converters: 6 V for propulsion and 4.8 V shared by
-servo and Pico. Branch the servo and Pico wiring at the supply, not through the
+The rail targets are 6 V for propulsion and 4.8 V shared by servo and Pico
+("5 V" is owner shorthand for 4.8 V). Branch the servo and Pico wiring at the supply, not through the
 Pico board; keep servo-current returns out of the Pico ground wiring.
 Provide suitable decoupling and validate rail stability under steering load.
 Use the Pico datasheet's external supply isolation arrangement (for example,
@@ -299,8 +333,9 @@ A separate logic converter remains an option if transient testing requires it.
   combined motor startup/stall load and servo load using actual specifications.
 - The selected motors are specified as 6 V units. The driver's
   wider VM operating range does not authorize applying that range to the motors.
-  Motor running/stall currents and breakout thermal capacity remain unknown,
-  so motor/driver current compatibility and the power design are not yet approved.
+  Running/stall ratings are now owner-supplied, but actual load/transient current
+  and breakout thermal capacity remain unverified, so motor/driver current
+  compatibility and the physical power design are not yet approved.
 - The DRV8833 IC specifies a 2.7-10.8 V operating motor supply range; the selected
   breakout, motors, and thermal environment may impose stricter limits. Its
   headline peak current is not a guaranteed continuous breakout rating.
@@ -321,15 +356,16 @@ A separate logic converter remains an option if transient testing requires it.
 | Servo frequency, minimum/center/maximum pulse, inversion | TBD; actual unit and linkage validation required |
 | Motor PWM frequency and maximum duty | TBD |
 | Motor A/B wheel identity | Confirmed: A = left, B = right |
-| Motor model and nominal voltage | 6 V; listing GA25-370 versus earlier owner GA24-370, actual model confirmation pending |
+| Motor model and nominal voltage | Owner-confirmed GA25-370, 6 V |
+| Motor current ratings | Owner-supplied 0.15 A running / 0.5 A stall each; actual load/transient validation pending |
 | Gear reduction | Owner-specified: 171:1 (motor shaft to gearbox output) |
 | Gearbox output speed | Listing: 35 rpm +/-15% no-load; not a measured wagon speed or control limit |
 | Motor forward polarity and inversion | TBD per motor |
 | Encoder channel count | Confirmed: two Hall switch channels per motor |
 | Encoder output interface, pull-ups, and phase relationship | TBD per motor |
 | Encoder counts per motor-shaft revolution and counting convention | TBD; distinguish pulses, edges, and quadrature x1/x2/x4 |
-| Encoder shaft location | TBD; confirm motor shaft versus gearbox output before converting counts |
-| Wheel circumference, output-to-wheel coupling, counts per wheel revolution | TBD per motor; do not multiply counts by 171 unless encoder location and counting convention justify it |
+| Encoder shaft location | Owner-confirmed motor shaft, before 171:1 gearbox |
+| Wheel circumference, output-to-wheel coupling, counts per wheel revolution | Coupling/circumference TBD; gearbox output counts per revolution = measured counts per motor revolution x 171, using the same counting convention |
 | Measured motor and servo current; approved power limits | TBD |
 
 ## References

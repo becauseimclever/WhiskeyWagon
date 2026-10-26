@@ -10,10 +10,15 @@ The [project source of truth](docs/README.md) indexes requirements, the
 [authoritative pin register](docs/hardware.md), firmware design, Bluetooth
 dependencies, and verification procedures.
 
-UART0 is reserved and the driver/encoder GPIO wiring plan is recorded in the
-hardware register; physical wiring is not yet verified. Bluepad32 and BlueKitchen
-BTstack integration and the wagon pin configuration are documented but not
-implemented; the current firmware is still the UART demonstration described below.
+The current bench firmware provides inhibited-only driver GPIO initialization,
+output-only UART0 diagnostics, Bluetooth pairing/reconnect, and simulated drive
+and steering ramps.
+The owner reports the Pico W and DRV8833 wired per plan P1,
+with shared ground and VM disconnected; motors, encoders, and batteries remain
+disconnected. Electrical verification is still pending. Motor output is
+compile-time inhibited; no servo pulses are emitted. Raw encoder capture is
+implemented but disabled until its electrical interface is verified. Closed-loop
+motor output, RPM conversion and calibrated differential mixing are not enabled.
 
 ## Repository layout
 
@@ -22,10 +27,20 @@ WhiskeyWagon/
     .vscode/                 Shared Pico extension build/debug configuration
     cmake/
         pico_sdk_import.cmake  SDK-provided import helper
+        bluetooth.cmake      Pinned Bluepad32 acquisition and SDK integration
     docs/                    Requirements, hardware register, design and verification
     src/
         main.cpp             Firmware entry point
+        board_config.hpp     Driver GPIO assignments from plan P1
+        bench_logic.hpp      Testable pairing/button/ramp/edge-count logic
+        bluetooth_adapter.c  Bluepad32 platform, reports and remembered controller
+        bluetooth_adapter.h  C/C++ adapter interface
+        encoder_capture.cpp  Gated raw encoder IRQ capture and snapshots
+        encoder_capture.hpp  Raw capture interface
+        btstack_config.h     SDK BTstack feature/buffer configuration
+        sdkconfig.h          Bluepad32 platform configuration
     CMakeLists.txt           Project and firmware target
+    tests/                   Compile-time deterministic bench logic tests
     build/                   Generated output (ignored by Git)
 ```
 
@@ -36,7 +51,7 @@ Keep SDK code and toolchains outside the repository.
 
 ## Prerequisites
 
-- CMake 3.13 or newer, Ninja, Python 3, and an Arm GNU bare-metal toolchain
+- CMake 3.18 or newer, Git, Ninja, Python 3, and an Arm GNU bare-metal toolchain
   (`arm-none-eabi-gcc` and `arm-none-eabi-g++`).
 - [Raspberry Pi Pico SDK](https://github.com/raspberrypi/pico-sdk), including its
   required submodules (`git submodule update --init --recursive` from the SDK directory).
@@ -48,6 +63,12 @@ picotool 2.3.1. Without an explicit `PICO_SDK_PATH`, CMake uses that installatio
 when available. Set `PICO_SDK_PATH` in the environment or CMake cache to use
 another SDK installation, and ensure its toolchain is available on `PATH` or set
 `PICO_TOOLCHAIN_PATH`.
+
+The first configure fetches Bluepad32 **5.0.0-beta0** at the immutable commit in
+`cmake/bluetooth.cmake`; network access is required once per build directory.
+Its optional submodules are not fetched. BTstack comes only from the Pico SDK,
+with both Classic and BLE enabled. See the [dependency register](docs/dependencies.md)
+for exact tested revisions and the beta compatibility decision.
 
 ## Build
 
@@ -72,26 +93,111 @@ outputs in `build/`, along with `compile_commands.json` for editor tooling.
 To flash without a debug probe, hold BOOTSEL while connecting the board over
 USB, then copy `whiskey_wagon.uf2` to its mass-storage drive.
 
-## Current behavior
+## Current behavior and first test
 
-- UART stdio is enabled; USB stdio is disabled.
-- UART1 uses GPIO4 (TX) and GPIO5 (RX) at 115200 baud and sends a startup greeting.
-- The firmware prints `Hello, world!` once per second through the board's default
-  stdio UART (UART0 on Pico W, TX GPIO0 / RX GPIO1).
+- Before initializing diagnostics, firmware drives STBY (GP14) low, then all four
+  bridge inputs (GP6-GP9) low. These outputs never intentionally go high.
+- UART0 outputs development logs at 115200 baud, 8N1 on GP0 (3.3 V logic).
+  GP1 remains reserved for UART0 RX but is not initialized. There is no input
+  parser or menu. UART1/GP4/GP5 are not initialized.
+- USB stdio is disabled; USB is used for BOOTSEL firmware upgrades, not a runtime
+  console. Normal operation does not require a PC or diagnostic adapter.
+- CYW43, SDK BTstack, and Bluepad32 initialize, then BTstack's run loop services
+  Bluetooth and the heartbeat timer. No Wi-Fi connection is started.
+- With no remembered controller, pairing opens automatically for 60 seconds.
+  Otherwise only the remembered address is admitted during reconnect; after
+  more than 30 seconds disconnected, a 60-second pairing window opens.
+  The previous controller can reconnect during pairing. First ready gamepad
+  wins: test with only the intended Micro in D-input mode discoverable.
+- Hold a dedicated normally-open button between GP15 (header pin 20) and GND
+  for 2 seconds to request pairing. Input uses a pull-up and 30 ms debounce.
+  Explicit pairing disconnects the current controller. Repeated requests do not
+  extend an already-open window. The BLE management service stays disabled.
+- Successful HID readiness persists the preferred controller address (versioned
+  SDK TLV tag), keeping prior identity until replacement is ready. SDK Classic/BLE
+  bonding storage owns keys; keys are never blanket-erased on boot or pairing.
+- If pairing expires, enter software sleep: motor signals remain low, servo
+  remains off, and Bluetooth powers off. A short button press/release wakes by
+  rebooting into the normal lifecycle. Pairing storage survives; uptime resets.
+  The Pico remains powered and UART/button timers run; this is not a low-power
+  specification or physical power-off.
+- Controller reports feed preview-only smoothstep ramps. Connection requires
+  released candidate B/X/Y before a fresh drive press; no arm/disarm mechanism.
+  Y coasts immediately in the preview, loss releases controls, same-report ties
+  resolve Y > B > X, and opposing steering directions center.
+- A startup banner and one-second status heartbeat report `mode=INHIBITED_ONLY`,
+  uptime, GPIO input readback, and unimplemented features. There is no arm command.
+- Bluetooth status starts as `initializing` and becomes `ready` only from the
+  Bluepad32 initialization-complete callback. Synchronous initialization errors
+  log and halt; HCI failures are explicit. Setup not completing within 15 seconds
+  halts with an error, not a readiness success.
+- `input` logs report normalized button masks, D-pad, axes, total reports and
+  inter-report gaps. Changes are logged at most 10 times/second (coalesced), but
+  every report is processed by control. Heartbeats include report age/gap data
+  to determine whether held controls repeat reports. No stale timeout is guessed.
+- Candidate physical B/X/Y masks are `0x0001` / `0x0008` / `0x0004` in
+  `board_config.hpp`, based on Bluepad32's positional normalization. These are
+  **unverified for this Micro**. Confirm each physical label before relying on
+  the preview; D-pad reports, not emulated stick axes, currently steer it.
+- Preview demand is normalized (`permille`), not measured RPM or motor PWM.
+  Differential geometry is uncalibrated; no wheel-speed target is invented.
+- Logs are emitted without waiting for a listener. If the startup banner is
+  missed, wait for the next heartbeat.
+
+Keep VM, motors, encoders, batteries, and actuator supplies disconnected for this
+test; power the Pico from USB only. Flash the UF2, then monitor GP0 using a
+3.3 V USB-to-UART adapter (adapter RX and shared ground only), and
+follow the [baseline checks](docs/verification.md#inhibited-only-baseline).
+Follow the [bench test procedure](docs/verification.md#bench-firmware-test-sequence).
+GPIO readback is not proof of bridge output state or electrical safety.
+Reset/BOOTSEL behavior and STBY compatibility still require measurement.
+
+### Encoder measurements (after interface verification only)
+
+Default builds leave GP10-GP13 untouched and print
+`encoder_capture=DISABLED_UNVERIFIED_INTERFACE rpm=UNAVAILABLE`.
+Do not connect unknown-voltage encoder outputs to the Pico.
+
+After verifying a 3.3 V-safe interface and appropriate external biasing, configure
+a separate build with `-DWHISKEY_ENCODER_CAPTURE_VERIFIED=ON`.
+That variant samples both edges with internal pulls disabled and logs separate
+A/B edge counts, tentative quadrature x4 position, invalid two-bit transitions,
+AB state and last-edge timestamp. Quadrature phase and direction remain
+unverified; these are measurements for calibration, not certified position.
+Motor output remains inhibited even in this variant.
+
+Hand-turn measured gearbox-output revolutions to establish counts using the
+171:1 motor-shaft reduction. Until the counting convention/resolution are
+verified, no RPM or stopped/moving assertion is produced. Powered speed-loop
+tuning, stall/feedback-fault detection and calibrated servo output are a later
+stage, not accessible through a runtime command or a motor-enable build switch.
 
 ## Conventions
 
 - Use `snake_case` for source/header filenames, CMake targets, namespaces,
   functions, and variables; use `PascalCase` for types and `kPascalCase` for constants.
 - Use `.cpp` for C++ sources and `.hpp` for project C++ headers.
+- The Bluepad32 platform adapter uses `.c`/`.h` for its C callback API; application
+  logic remains C++17.
 - Use four-space indentation and format C++ with the root `.clang-format`.
 - Keep includes and dependencies target-scoped in CMake and list sources explicitly.
 - Keep generated files, local build presets, SDKs, and toolchains out of Git.
 
 ## Validation
 
-Configure and build the firmware before submitting changes. There are no automated
-application tests yet; UART behavior and flashing require a connected board.
+Build the firmware:
+
+```sh
+cmake --build build --target whiskey_wagon
+```
+
+Repeat with a separate Debug/Release build directory when validating both modes.
+`bench_logic_tests` runs C++17 compile-time assertions and is a dependency of the
+firmware build. It checks ramp timing/reversal/coast behavior, neutral qualification,
+button precedence, pairing deadlines, sleep, debounce/hold behavior, and encoder
+transition counting. Hardware/Bluetooth integration still needs on-board tests.
+UART output, GPIO levels, reset behavior, and flashing require a connected
+board; a successful build does not verify them.
 
 ## License
 

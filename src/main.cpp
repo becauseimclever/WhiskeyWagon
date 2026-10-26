@@ -1,27 +1,219 @@
 #include <cstdio>
+#include <cstring>
 
-#include "hardware/uart.h"
+#include "bench_logic.hpp"
+#include "bluetooth_adapter.h"
+#include "board_config.hpp"
+#include "btstack_run_loop.h"
+#include "encoder_capture.hpp"
+#include "hardware/watchdog.h"
+#include "pico/stdio_uart.h"
 #include "pico/stdlib.h"
 
 namespace {
-constexpr unsigned int kUartBaudRate = 115200;
-constexpr unsigned int kUartTxPin = 4;
-constexpr unsigned int kUartRxPin = 5;
+using namespace whiskey_wagon;
+static_assert(!kMotorOutputsEnabled, "This bench firmware must not energize the motors");
+constexpr unsigned int kControlIntervalMs = 10;
 constexpr unsigned int kHeartbeatIntervalMs = 1000;
-}  // namespace
+btstack_timer_source_t control_timer = {};
+BenchControl control;
+LinkLifecycle lifecycle;
+PairButton pairing_button;
+bool lifecycle_started = false;
+bool was_connected = false;
+uint64_t last_tick_ms = 0;
+uint64_t next_heartbeat_ms = 0;
+BluetoothInput last_logged_input = {};
+bool input_dirty = false;
+bool have_logged_input = false;
+uint64_t next_input_log_ms = 0;
+
+void initialize_low_output(unsigned int pin)
+{
+    gpio_init(pin);
+    gpio_put(pin, false);
+    gpio_set_dir(pin, GPIO_OUT);
+}
+
+const char* mode_name(LinkMode mode)
+{
+    switch (mode) {
+    case LinkMode::kReconnect: return "reconnect";
+    case LinkMode::kPairing: return "pairing";
+    case LinkMode::kConnected: return "connected";
+    case LinkMode::kSleeping: return "sleeping";
+    }
+    panic("Invalid lifecycle mode");
+}
+
+void apply_mode()
+{
+    printf("lifecycle mode=%s uptime_ms=%llu\n", mode_name(lifecycle.mode()),
+           static_cast<unsigned long long>(time_us_64() / 1000));
+    switch (lifecycle.mode()) {
+    case LinkMode::kReconnect: bluetooth_set_mode(BLUETOOTH_RECONNECT); break;
+    case LinkMode::kPairing: bluetooth_set_mode(BLUETOOTH_PAIRING); break;
+    case LinkMode::kConnected: bluetooth_set_mode(BLUETOOTH_CONNECTED); break;
+    case LinkMode::kSleeping:
+        control.sleep();
+        bluetooth_set_mode(BLUETOOTH_SLEEPING);
+        printf("sleep: software idle, NOT power removal; GP15 short press wakes by reboot\n");
+        break;
+    }
+}
+
+void on_input(const BluetoothInput* input)
+{
+    if (!input) {
+        control.connection_reset();
+        have_logged_input = false;
+        input_dirty = false;
+        return;
+    }
+    // Preview only: raw reports establish physical labels before any powered firmware.
+    control.report({(input->buttons & kForwardButtonMask) != 0,
+                    (input->buttons & kReverseButtonMask) != 0,
+                    (input->buttons & kCoastButtonMask) != 0,
+                    (input->dpad & (1u << 3)) != 0,
+                    (input->dpad & (1u << 2)) != 0});
+    if (!have_logged_input || input->buttons != last_logged_input.buttons ||
+        input->dpad != last_logged_input.dpad || input->misc != last_logged_input.misc ||
+        std::memcmp(input->axes, last_logged_input.axes, sizeof(input->axes)) != 0) {
+        input_dirty = true;
+    }
+}
+
+void print_input(uint64_t now)
+{
+    if (!input_dirty || now < next_input_log_ms) {
+        return;
+    }
+    const auto* input = bluetooth_input();
+    printf("input t_ms=%lu buttons=0x%04x dpad=0x%02x misc=0x%02x "
+           "axes=%ld,%ld,%ld,%ld reports=%lu age_ms=%lu max_gap_ms=%lu mapping=UNVERIFIED\n",
+           static_cast<unsigned long>(input->last_report_ms), input->buttons, input->dpad,
+           input->misc, static_cast<long>(input->axes[0]), static_cast<long>(input->axes[1]),
+           static_cast<long>(input->axes[2]), static_cast<long>(input->axes[3]),
+           static_cast<unsigned long>(input->reports),
+           static_cast<unsigned long>(static_cast<uint32_t>(now) - input->last_report_ms),
+           static_cast<unsigned long>(input->max_gap_ms));
+    last_logged_input = *input;
+    have_logged_input = true;
+    input_dirty = false;
+    next_input_log_ms = now + 100; // Coalesce diagnostics, never coalesce control events.
+}
+
+void print_status(uint64_t now)
+{
+    printf("status uptime_ms=%llu mode=INHIBITED_ONLY link=%s bluetooth=%s connected=%u "
+           "stby_gp14=%u ain1_gp6=%u ain2_gp7=%u bin1_gp8=%u bin2_gp9=%u "
+           "servo=off encoder_capture=%s rpm=UNAVAILABLE\n",
+           static_cast<unsigned long long>(now),
+           lifecycle_started ? mode_name(lifecycle.mode()) : "starting", bluetooth_status(),
+           static_cast<unsigned int>(bluetooth_connected()),
+           static_cast<unsigned int>(gpio_get(kStandbyPin)),
+           static_cast<unsigned int>(gpio_get(kMotorInputPins[0])),
+           static_cast<unsigned int>(gpio_get(kMotorInputPins[1])),
+           static_cast<unsigned int>(gpio_get(kMotorInputPins[2])),
+           static_cast<unsigned int>(gpio_get(kMotorInputPins[3])),
+           WHISKEY_ENCODER_CAPTURE_VERIFIED ? "raw_edges" : "DISABLED_UNVERIFIED_INTERFACE");
+    printf("preview drive_permille=%d steering_permille=%d coast=%u input_qualified=%u "
+           "physical_mapping=UNVERIFIED differential=UNCALIBRATED speed_loop=NOT_ENABLED\n",
+           static_cast<int>(control.drive() * 1000),
+           static_cast<int>(control.steering() * 1000), control.coast(), control.qualified());
+#if WHISKEY_ENCODER_CAPTURE_VERIFIED
+    const auto snapshots = encoder_snapshot();
+    for (unsigned int motor = 0; motor < snapshots.size(); ++motor) {
+        const auto& sample = snapshots[motor];
+        printf("encoder motor=%s a_edges=%lu b_edges=%lu tentative_x4=%lld "
+               "invalid=%lu ab=%u last_edge_us=%llu phase=UNVERIFIED cpr=UNKNOWN\n",
+               motor == 0 ? "left" : "right", static_cast<unsigned long>(sample.counts.a_edges),
+               static_cast<unsigned long>(sample.counts.b_edges),
+               static_cast<long long>(sample.counts.tentative_position),
+               static_cast<unsigned long>(sample.counts.invalid_transitions),
+               sample.counts.previous, static_cast<unsigned long long>(sample.last_edge_us));
+    }
+#endif
+    const auto* input = bluetooth_input();
+    if (input->reports) {
+        printf("reports total=%lu age_ms=%lu max_gap_ms=%lu (no guessed stale-report timeout)\n",
+               static_cast<unsigned long>(input->reports),
+               static_cast<unsigned long>(static_cast<uint32_t>(now) - input->last_report_ms),
+               static_cast<unsigned long>(input->max_gap_ms));
+    }
+}
+
+void on_control_tick(btstack_timer_source_t* timer)
+{
+    const uint64_t now = time_us_64() / 1000;
+    const auto elapsed = static_cast<uint32_t>(now - last_tick_ms);
+    last_tick_ms = now;
+    const bool sleeping = lifecycle_started && lifecycle.mode() == LinkMode::kSleeping;
+    const auto button = pairing_button.update(!gpio_get(kPairingButtonPin), now);
+    if (sleeping && button == ButtonEvent::kShortPress) {
+        printf("wake: rebooting into normal reconnect/pairing lifecycle\n");
+        stdio_flush();
+        watchdog_reboot(0, 0, 10);
+    }
+    if (std::strcmp(bluetooth_status(), "failed") == 0) {
+        panic("Bluetooth failed; outputs remain inhibited");
+    }
+    if (bluetooth_ready()) {
+        if (!lifecycle_started) {
+            lifecycle.start(bluetooth_remembered(), now);
+            lifecycle_started = true;
+            apply_mode();
+        }
+        const auto previous = lifecycle.mode();
+        const bool connected = bluetooth_connected();
+        if (!sleeping) {
+            if (connected && !was_connected) lifecycle.connected();
+            if (!connected && was_connected) {
+                control.disconnect();
+                lifecycle.disconnected(now);
+            }
+            if (button == ButtonEvent::kHold) {
+                control.disconnect();
+                lifecycle.pair(now);
+            }
+            lifecycle.update(now);
+            if (lifecycle.mode() != previous) apply_mode();
+        }
+        was_connected = bluetooth_connected();
+    } else if (now > 15000) {
+        panic("Bluetooth setup not ready after 15 s; outputs inhibited; inspect UART boot log");
+    }
+    if (!sleeping && lifecycle.mode() != LinkMode::kSleeping) {
+        control.tick(elapsed);
+        print_input(now);
+    }
+    if (now >= next_heartbeat_ms) {
+        print_status(now);
+        next_heartbeat_ms = now + kHeartbeatIntervalMs;
+    }
+    btstack_run_loop_set_timer(timer, kControlIntervalMs);
+    btstack_run_loop_add_timer(timer);
+}
+} // namespace
 
 int main()
 {
-    stdio_init_all();
+    initialize_low_output(kStandbyPin);
+    for (const auto pin : kMotorInputPins) initialize_low_output(pin);
+    gpio_init(kPairingButtonPin);
+    gpio_set_dir(kPairingButtonPin, GPIO_IN);
+    gpio_pull_up(kPairingButtonPin);
 
-    // UART1 is separate from the default UART0 used by stdio.
-    uart_init(uart1, kUartBaudRate);
-    gpio_set_function(kUartTxPin, GPIO_FUNC_UART);
-    gpio_set_function(kUartRxPin, GPIO_FUNC_UART);
-    uart_puts(uart1, " Hello, UART!\n");
-
-    while (true) {
-        std::printf("Hello, world!\n");
-        sleep_ms(kHeartbeatIntervalMs);
-    }
+    stdout_uart_init();
+    printf("WhiskeyWagon BENCH P1; INHIBITED_ONLY; keep VM/motors disconnected.\n"
+           "GP15: momentary to GND, 2 s hold pairs, short press wakes software sleep.\n"
+           "D-input Micro: mapping unverified, preview only; no motor PWM or servo pulses.\n");
+    initialize_encoder_capture();
+    if (!bluetooth_initialize(on_input)) panic("Bluetooth startup failed; motor output inhibited");
+    last_tick_ms = time_us_64() / 1000;
+    btstack_run_loop_set_timer_handler(&control_timer, on_control_tick);
+    btstack_run_loop_set_timer(&control_timer, kControlIntervalMs);
+    btstack_run_loop_add_timer(&control_timer);
+    btstack_run_loop_execute();
+    panic("Bluetooth run loop exited; outputs inhibited");
 }

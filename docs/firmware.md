@@ -1,8 +1,94 @@
 # Firmware design
 
+## Open-loop wagon POC (2026-10-31)
+
+`whiskey_wagon_poc` is a separate target sharing the existing Bluetooth adapter,
+10 ms BTstack control timer, pairing persistence/lifecycle and button precedence.
+The original `whiskey_wagon` target retains its inhibited-only assertion and
+does not configure motor or servo PWM. No image was flashed for this draft.
+
+The owner selected an open-loop first POC pending calibration. Two motor
+profiles in `poc_config.hpp` record 6 V, 150 mA running / 500 mA stall,
+171:1 reduction and 35 RPM rated output. These are supplied specifications;
+35 RPM is not a speed setpoint or measured motion. CPR, wheel coupling, and
+loaded speed remain unknown. Both motors receive equal bounded duty, with
+independent polarity inversion. There is no speed regulator or differential
+mixing until encoder/steering geometry calibration supports them.
+
+`poc_logic.hpp` wraps the existing smoothstep demand ramps and adds:
+
+- B/X/Y release qualification and fresh-press precedence, unchanged from preview.
+  Y immediately sets both drive demands to zero; steering continues normally.
+- A provisional 500 ms valid-report lease using the same wrapping 32-bit BTstack
+  clock as report timestamps. Expiry/disconnect synthesizes release, so drive
+  ramps down and steering centers. A late held report cannot renew old demand.
+  A fresh neutral report then fresh drive press is required. The maximum
+  nominal full-demand timeout-to-zero is lease + 700 ms + one 10 ms tick.
+  This is electrical demand latency, not physical stopping time.
+- A 250 ms zero-duty reversal dwell; when Hall monitoring is enabled, both
+  motors must also have no edges for 250 ms. Continued edges blocking reversal
+  for 2000 ms latch a fault. Demand ramps stay at zero while waiting, with
+  steering still updating. No edges is not proof of mechanical rest.
+- Powered-only Hall guards: any newly observed invalid transition at nonzero
+  drive duty faults; at duty >=100 permille, a 500 ms absence of either channel
+  on either motor faults, after a 500 ms monitoring startup grace. These are
+  conservative provisional bench thresholds, not validated fault coverage.
+  Low-duty silence is not diagnosed. Single-channel toggling is not treated as
+  healthy feedback. Both motors coast and servo pulses stop on a latched fault.
+  Only reboot clears a fault; new controller reports cannot clear it.
+- A control tick elapsed time >100 ms latches an overrun fault. A 200 ms hardware
+  watchdog, not paused by a debugger, resets a stalled run loop. It starts after
+  synchronous Bluetooth initialization while outputs are still zero. Reset-time
+  inhibition requires hardware biasing; watchdog reset is not a mechanical brake.
+
+`poc_outputs.cpp` owns motor PWM slices 3/4 at nominal 20 kHz (TOP=999);
+positive/negative electrical commands set only one input of each pair, and zero
+sets both low. STBY is low when drive duty is zero, high only after applying
+nonzero duty. There is no active braking. SG92R uses slice 1 on GP2, nominal
+50 Hz with 1 us counts. Boot starts with all outputs low. In a powered image,
+the first control tick starts the verified center pulse; sleep/fault stops pulses.
+Y output changes are applied in the input callback as well as on the next tick.
+PWM compare writes are buffered by the SDK until the next PWM wrap.
+
+### POC configuration and verification gate
+
+`WHISKEY_BUILD_POC` defaults ON, but `WHISKEY_POC_ACTUATORS_VERIFIED` defaults
+OFF: all motor signals stay low and no servo PWM is configured. Raw Hall
+capture remains separately gated by `WHISKEY_ENCODER_CAPTURE_VERIFIED`.
+Powered configuration is rejected unless both-motor encoder capture is enabled.
+The output flag is an explicit physical-bench attestation, not auto-detection.
+Do not set it until the [POC procedure](verification.md#first-integrated-poc-bench-test)
+passes its wiring, reset, mapping, cadence, polarity and servo gates.
+
+| CMake setting | Default | Meaning / gate |
+| --- | --- | --- |
+| `WHISKEY_POC_MAX_DUTY_PERMILLE` | 250 | 25% cap, allowed 100-1000; not a calibrated starting duty. If stationary, stop and investigate; never add an automatic full-duty kick |
+| `WHISKEY_POC_REPORT_TIMEOUT_MS` | 500 | Allowed 100-2000 ms; hold controls and measure cadence before enabling outputs. If unchanged reports are suppressed, this POC cannot sustain drive; do not disable freshness protection |
+| `WHISKEY_POC_SERVO_LEFT_US` | 1400 | Provisional physical-left endpoint, not a manufacturer-approved linkage limit |
+| `WHISKEY_POC_SERVO_CENTER_US` | 1500 | Provisional center; establish horn alignment with linkage disconnected |
+| `WHISKEY_POC_SERVO_RIGHT_US` | 1600 | Provisional physical-right endpoint; endpoints can be reversed |
+| `WHISKEY_POC_LEFT_INVERTED`, `WHISKEY_POC_RIGHT_INVERTED` | OFF | Change independently after measuring physical-forward polarity with lifted wheels |
+
+Servo values must be distinct, center between endpoints, each 1000-2000 us.
+This validation bounds configuration, not actual servo safety; linkage acceptance
+remains mandatory. GP14 must control STBY with verified reset-time inhibition:
+the externally enabled, GP14-disconnected bench arrangement is not supported
+by the powered POC. UART0 on GP0 remains the output-only diagnostic interface;
+USB runtime serial stays disabled. Status separates requested duty/servo pulses
+from raw Hall counts and explicitly withholds RPM. Fault numbers:
+0=none, 1=Hall invalid, 2=Hall silent, 3=reversal timeout, 4=control overrun.
+Existing raw input logs support tomorrow's physical mapping check.
+Logs are coalesced to 10/second plus heartbeat; UART timing and Bluetooth stalls
+still need on-board measurement against overrun/watchdog bounds.
+
+Deterministic compile-time tests cover output caps/endpoints/inversion, profile
+shape, input qualification/loss/late reports, timestamp wrap, stop, normal and
+Y-triggered reversal/dwell, continued-edge timeout, Hall grace/exact silence
+threshold, missing single channel, invalid transitions and latched fault recovery.
+
 ## Current implementation
 
-The target is `whiskey_wagon`, C++17, with `pico_stdlib`, UART stdio,
+The original target is `whiskey_wagon`, C++17, with `pico_stdlib`, UART stdio,
 Bluepad32, and SDK BTstack Classic/BLE.
 The baseline is deliberately **inhibited-only**, not a motion controller:
 
@@ -64,6 +150,43 @@ Reset-time inhibition still depends on unverified hardware biasing.
 No arming, running watchdog, controller-freshness timeout or powered stop policy
 is claimed by this build. The watchdog API is used only for button wake reboot.
 Hardware acceptance remains separate in [verification](verification.md).
+
+## Standalone right-motor diagnostic image
+
+The opt-in `right_motor_test` CMake target uses USB CDC instead of Bluetooth or
+UART. Its separate entry point holds the left bridge inputs low and uses the
+right bridge's shared PWM slice at 20 kHz. A verified-bench configure flag is
+required; the default firmware and its motor-inhibition assertion are unchanged.
+`right_motor_test_logic.hpp` owns one-shot arming (5 s), default 25%/500 ms pulses,
+explicit 50% diagnostic commands (500 ms short or 5 s long) and 500 ms cooldown.
+Compile-time tests cover pulse boundaries, duration/duty validation, reversal
+rejection, stop/re-arm behavior and exact command matching.
+
+The main loop bounds input processing and checks USB DTR, while an independent
+alarm callback inhibits STBY/PWM at the pulse deadline. A 200 ms watchdog resets
+a stalled loop without pausing for a debugger; reset-time electrical inhibition
+still requires hardware biasing. Unknown/invalid commands inhibit with an error.
+Only right Hall capture is enabled; encoder snapshots reuse the existing
+IRQ-masked capture implementation. No direction, CPR, RPM or stall detection is
+inferred from raw Hall edges. See the
+[bench procedure](verification.md#right-motor-usb-bench-test) for operational limits.
+
+The diagnostic-only `WHISKEY_RIGHT_MOTOR_STBY_DISCONNECTED` option omits all
+GP14 access in this target, including status reads. It requires the STBY wire
+disconnected and reports an uncontrolled enable; stop/timeout then clears PWM
+only. Default test builds retain GP14 control; the normal firmware is unaffected.
+
+Hall diagnostics now include positive/negative x4 steps and actual-time count
+rates. Manual `mark`/`cal10` motor-shaft calibration gates signed motor RPM;
+mixed-direction or invalid rate windows withhold RPM. Calibration is RAM-only.
+Manual `fwd100`/`rev100` use the tested one-second full-duty limit and require
+fresh arming. Both boot options OFF restores the normal interactive workflow.
+
+`hall_motion.hpp` classifies recent Hall movement independently of duty/RPM.
+The manual test reports every 100 ms; direction expires at 250 ms without
+edges. Mixed/invalid windows withhold direction, and no recent edges is not a
+claim of a mechanically stopped motor or healthy wiring. No Bluetooth throttle
+integration is enabled.
 
 ## Proposed architecture
 

@@ -2,6 +2,12 @@
 
 ## Confirmed scope
 
+**First-draft milestone, 2026-10-31:** Owner selected an open-loop Bluetooth/PWM/
+SG92R POC with Hall diagnostics and powered outputs gated on bench verification.
+This is a temporary bring-up milestone; REQ-11 closed-loop regulation and REQ-12
+calibrated differential turning remain final requirements, not implemented POC
+features. Motor ratings confirmed today: 171:1 reduction, 35 RPM output shaft.
+
 | ID | Requirement | Verification |
 | --- | --- | --- |
 | REQ-01 | Build an RC wagon using the Raspberry Pi Pico SDK and C++ | Firmware builds for the selected board |

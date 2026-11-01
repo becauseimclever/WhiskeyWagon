@@ -25,21 +25,26 @@ void on_edge(unsigned int pin, uint32_t events)
 #endif
 } // namespace
 
-void initialize_encoder_capture()
+void initialize_encoder_capture(bool capture_left)
 {
 #if WHISKEY_ENCODER_CAPTURE_VERIFIED
-    for (const auto pin : kEncoderPins) {
+    const unsigned int first_pin = capture_left ? 0 : 2;
+    for (unsigned int index = first_pin; index < kEncoderPins.size(); ++index) {
+        const auto pin = kEncoderPins[index];
         gpio_init(pin);
         gpio_set_dir(pin, GPIO_IN);
         gpio_disable_pulls(pin);
     }
-    for (unsigned int motor = 0; motor < counters.size(); ++motor) {
+    for (unsigned int motor = first_pin / 2; motor < counters.size(); ++motor) {
         counters[motor].counts.previous = pin_state(motor);
     }
-    for (const auto pin : kEncoderPins) {
+    for (unsigned int index = first_pin; index < kEncoderPins.size(); ++index) {
+        const auto pin = kEncoderPins[index];
         gpio_set_irq_enabled_with_callback(pin, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL,
                                           true, on_edge);
     }
+#else
+    (void)capture_left;
 #endif
 }
 

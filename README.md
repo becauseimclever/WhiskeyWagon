@@ -4,21 +4,54 @@ C++17 firmware for a Bluetooth-controlled RC wagon, built with the Raspberry Pi
 Pico SDK and currently targeting the Pico W. Planned hardware includes an SG92R
 steering servo, two DRV8833-driven motors, and Hall-effect motor encoders.
 
+## First wagon POC (2026-10-31)
+
+The separate `whiskey_wagon_poc` image now implements Bluetooth drive commands,
+bounded open-loop PWM for both 6 V GA25-370 motors, and SG92R steering on GP2.
+The motor profile records **171:1 reduction and 35 RPM rated output-shaft speed**.
+These specifications do not establish encoder resolution or measured wheel RPM.
+
+Both motors passed the latest powered pulse test after harness repair; left Hall
+capture and physical-forward polarity remain unverified. STBY was externally
+enabled with GP14 disconnected in those tests; **do not connect GP14 to an
+externally driven STBY**. Controlled STBY must be verified before powered POC use.
+
+Build the POC with the normal build configuration:
+
+```sh
+cmake --build build --target whiskey_wagon_poc
+```
+
+The resulting `build/whiskey_wagon_poc.uf2` is **actuator-inhibited by default**,
+ready for tomorrow's controller mapping/cadence tests. The original
+`whiskey_wagon` and manual motor-test images remain separate.
+See [POC behavior and configuration](docs/firmware.md#open-loop-wagon-poc-2026-10-31)
+and [the first integrated bench procedure](docs/verification.md#first-integrated-poc-bench-test).
+Closed-loop speed regulation and geometry-based differential turning remain
+required later; this POC deliberately does not claim either.
+
 ## Project documentation
 
 The [project source of truth](docs/README.md) indexes requirements, the
 [authoritative pin register](docs/hardware.md), firmware design, Bluetooth
 dependencies, and verification procedures.
 
-The current bench firmware provides inhibited-only driver GPIO initialization,
+The original bench firmware provides inhibited-only driver GPIO initialization,
 output-only UART0 diagnostics, Bluetooth pairing/reconnect, and simulated drive
 and steering ramps.
 The owner reports the Pico W and DRV8833 wired per plan P1,
-with shared ground and VM disconnected; motors, encoders, and batteries remain
-disconnected. Electrical verification is still pending. Motor output is
+with shared ground; initial bring-up had VM, motors, encoders, and batteries
+disconnected. Later powered test results are recorded above and in verification.
+Electrical acceptance is still pending. Motor output in the original image is
 compile-time inhibited; no servo pulses are emitted. Raw encoder capture is
 implemented but disabled until its electrical interface is verified. Closed-loop
 motor output, RPM conversion and calibrated differential mixing are not enabled.
+
+An optional, separate **right-motor USB bench image** is now available. It uses
+manual one-shot pulses, not Bluetooth or closed-loop control. See
+[the reusable powered test](docs/verification.md#right-motor-usb-bench-test)
+for electrical gates, build commands, console commands and acceptance checks.
+The default `whiskey_wagon` image remains inhibited-only with USB stdio disabled.
 
 ## Repository layout
 
@@ -37,6 +70,8 @@ WhiskeyWagon/
         bluetooth_adapter.h  C/C++ adapter interface
         encoder_capture.cpp  Gated raw encoder IRQ capture and snapshots
         encoder_capture.hpp  Raw capture interface
+        right_motor_test.cpp Standalone opt-in USB right-motor bench test
+        right_motor_test_logic.hpp One-shot pulse limits and command matching
         btstack_config.h     SDK BTstack feature/buffer configuration
         sdkconfig.h          Bluepad32 platform configuration
     CMakeLists.txt           Project and firmware target
@@ -194,8 +229,9 @@ cmake --build build --target whiskey_wagon
 Repeat with a separate Debug/Release build directory when validating both modes.
 `bench_logic_tests` runs C++17 compile-time assertions and is a dependency of the
 firmware build. It checks ramp timing/reversal/coast behavior, neutral qualification,
-button precedence, pairing deadlines, sleep, debounce/hold behavior, and encoder
-transition counting. Hardware/Bluetooth integration still needs on-board tests.
+button precedence, pairing deadlines, sleep, debounce/hold behavior, encoder
+transition counting, and right-motor arming/pulse/duty/cooldown limits.
+Hardware/Bluetooth integration still needs on-board tests.
 UART output, GPIO levels, reset behavior, and flashing require a connected
 board; a successful build does not verify them.
 

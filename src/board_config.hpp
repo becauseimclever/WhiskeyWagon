@@ -7,6 +7,7 @@ inline constexpr unsigned int kStandbyPin = 14;
 inline constexpr std::array<unsigned int, 4> kMotorInputPins = {6, 7, 8, 9};
 inline constexpr std::array<unsigned int, 4> kEncoderPins = {10, 11, 12, 13};
 inline constexpr unsigned int kPairingButtonPin = 15;
+inline constexpr unsigned int kServoPin = 2;
 inline constexpr bool kMotorOutputsEnabled = false;
 // Candidate positional mappings only, to be checked against physical Micro labels.
 inline constexpr unsigned int kForwardButtonMask = 1u << 0;

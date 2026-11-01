@@ -10,6 +10,6 @@ struct EncoderSnapshot {
     uint64_t last_edge_us = 0;
 };
 
-void initialize_encoder_capture();
+void initialize_encoder_capture(bool capture_left = true);
 std::array<EncoderSnapshot, 2> encoder_snapshot();
 } // namespace whiskey_wagon

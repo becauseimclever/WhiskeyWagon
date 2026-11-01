@@ -158,20 +158,21 @@ public:
         drive_.reset();
         steering_.reset();
     }
-    constexpr void tick(uint32_t elapsed_ms)
+    constexpr void tick(uint32_t elapsed_ms, bool hold_drive = false)
     {
         float target = static_cast<float>(winner_);
         if (target * drive_.value() < 0) {
             target = 0;
         }
         const bool slowing = target == 0;
-        drive_.update(target, elapsed_ms, slowing ? 700 : 1000);
+        drive_.update(target, hold_drive ? 0 : elapsed_ms, slowing ? 700 : 1000);
         steering_.update(steering_target_, elapsed_ms, 500);
     }
     constexpr float drive() const { return drive_.value(); }
     constexpr float steering() const { return steering_.value(); }
     constexpr bool qualified() const { return qualified_; }
     constexpr bool coast() const { return coast_; }
+    constexpr int requested_direction() const { return winner_; }
 
 private:
     DriveInput previous_ = {};
@@ -188,6 +189,8 @@ struct EncoderCounter {
     uint32_t b_edges = 0;
     int64_t tentative_position = 0;
     uint32_t invalid_transitions = 0;
+    uint32_t positive_steps = 0;
+    uint32_t negative_steps = 0;
     uint8_t previous = 0;
 
     constexpr void sample(uint8_t state)
@@ -200,7 +203,10 @@ struct EncoderCounter {
         } else if (changed != 0) {
             constexpr int8_t steps[16] = {0, -1, 1, 0, 1, 0, 0, -1,
                                          -1, 0, 0, 1, 0, 1, -1, 0};
-            tentative_position += steps[(previous << 2) | state];
+            const auto step = steps[(previous << 2) | state];
+            tentative_position += step;
+            positive_steps += step > 0;
+            negative_steps += step < 0;
         }
         previous = state;
     }

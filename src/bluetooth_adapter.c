@@ -38,14 +38,14 @@ static void on_hci_event(uint8_t packet_type, uint16_t channel, uint8_t* packet,
     }
     if (hci_event_packet_get_type(packet) == BTSTACK_EVENT_POWERON_FAILED) {
         status = "failed";
-        printf("error: Bluetooth HCI power-on failed; motor output inhibited\n");
+        printf("error: Bluetooth HCI power-on failed; control shutdown required\n");
     } else if (hci_event_packet_get_type(packet) == BTSTACK_EVENT_STATE &&
                btstack_event_state_get_state(packet) == HCI_STATE_OFF) {
         status = sleeping ? "sleeping" : "failed";
         if (sleeping) {
             printf("Bluetooth: HCI off confirmed; software sleep\n");
         } else {
-            printf("error: unexpected Bluetooth HCI off; motor output inhibited\n");
+            printf("error: unexpected Bluetooth HCI off; control shutdown required\n");
         }
     }
 }
@@ -56,7 +56,7 @@ static void platform_init(int argc, const char** argv)
     (void)argv;
     uni_bt_allow_incoming_connections(false);
     uni_bt_service_set_enabled(false);
-    printf("Bluetooth: initializing bench platform; outputs inhibited\n");
+    printf("Bluetooth: initializing wagon platform; fresh input required\n");
 }
 
 static void on_init_complete(void)
@@ -152,7 +152,11 @@ static uni_error_t on_device_ready(uni_hid_device_t* device)
     uni_bt_allow_incoming_connections(false);
     gap_connectable_control(0);
     printf("Bluetooth: controller ready address=%s name=%s vid=%04x pid=%04x; "
+#if WHISKEY_WAGON_POC
+           "release B/X/Y then fresh press; POC mapping must be verified\n",
+#else
            "release B/X/Y then press to preview; mapping UNVERIFIED\n",
+#endif
            bd_addr_to_str(device->conn.btaddr), device->name,
            device->vendor_id, device->product_id);
     return UNI_ERROR_SUCCESS;
@@ -190,7 +194,11 @@ static void on_oob_event(uni_platform_oob_event_t event, void* data)
 }
 
 static struct uni_platform platform = {
+#if WHISKEY_WAGON_POC
+    .name = "WhiskeyWagon open-loop POC",
+#else
     .name = "WhiskeyWagon inhibited bench",
+#endif
     .init = platform_init,
     .on_init_complete = on_init_complete,
     .on_device_discovered = on_device_discovered,
@@ -260,17 +268,21 @@ void bluetooth_set_mode(BluetoothMode next)
     }
     uni_bt_stop_scanning_unsafe();
     if (!uni_bt_allowlist_remove_all()) {
-        panic("Bluetooth allowlist reset failed; outputs inhibited");
+        status = "failed";
+        printf("error: Bluetooth allowlist reset failed; control shutdown required\n");
+        return;
     }
     if (remembered && !uni_bt_allowlist_add_addr(last_address)) {
-        panic("Bluetooth remembered-controller filter failed; outputs inhibited");
+        status = "failed";
+        printf("error: Bluetooth remembered-controller filter failed; control shutdown required\n");
+        return;
     }
     uni_bt_allowlist_set_enabled(next == BLUETOOTH_RECONNECT);
     uni_bt_allow_incoming_connections(true);
     gap_connectable_control(1);
     gap_discoverable_control(0);
     uni_bt_start_scanning_and_autoconnect_unsafe();
-    printf("Bluetooth: mode=%s; window_ms=%u; first ready gamepad wins; outputs inhibited\n",
+    printf("Bluetooth: mode=%s; window_ms=%u; first ready gamepad wins; fresh input required\n",
            next == BLUETOOTH_PAIRING ? "pairing" : "reconnect",
            next == BLUETOOTH_PAIRING ? 60000u : 30000u);
 }

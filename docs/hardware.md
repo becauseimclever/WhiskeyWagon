@@ -2,6 +2,25 @@
 
 ## Wiring status
 
+**Owner update, 2026-10-31:** Both GA25-370 drive motors have 171:1 reduction
+gearboxes and are rated at 35 RPM on the output shaft. Steering is an SG92R.
+The nominal implied motor-shaft speed is 35 * 171 = 5985 RPM; this is a rating
+calculation, not a measured speed or encoder calibration. Encoder output-shaft
+counts/revolution still require measured motor-shaft counts/revolution * 171.
+The latest simultaneous full-duty pulse passed after left harness repair.
+Those tests used external STBY enable with GP14 disconnected; controlled GP14
+enable and left Hall capture remain unverified. The integrated POC defaults to
+inhibited outputs and does not supersede electrical acceptance.
+
+**Owner update, 2026-10-30:** Right motor is now wired and powered, with both
+right Hall channels connected. Owner confirmed GP8/GP9, GP14 and GP12/GP13
+assignments, reported 3.3 V interfaces, and confirmed a secured/lifted wheel with
+disconnect access. Left motor/encoder wiring was not reconfirmed. These reports
+supersede the disconnected-right-motor status below, not the outstanding
+measurement/calibration requirements. The optional
+[right-motor test](verification.md#right-motor-usb-bench-test) can drive GP8/GP9
+and enable GP14; the normal image still holds all motor outputs low.
+
 **Owner-reported wiring, 2026-10-25:** Pico W; GP6/GP7 to AIN1/AIN2,
 GP8/GP9 to BIN1/BIN2, GP14 to STBY, shared ground, VM disconnected.
 Motors, encoders, and batteries remain disconnected. Board revision, electrical

@@ -95,6 +95,7 @@ public:
             const auto& sample = encoders[motor];
             const uint32_t invalid = sample.counts.invalid_transitions;
             if (duty && invalid != previous_invalid_[motor]) {
+                fault_motor_ = static_cast<int>(motor);
                 fail(PocFault::kHallInvalid);
                 return;
             }
@@ -115,6 +116,7 @@ public:
                     channel_since_[motor][channel] = now;
                 previous_edges_[motor][channel] = edges[channel];
                 if (now - channel_since_[motor][channel] >= kHallSilenceMs) {
+                    fault_motor_ = static_cast<int>(motor);
                     fail(PocFault::kHallSilent);
                     return;
                 }
@@ -122,6 +124,7 @@ public:
             const auto edge_age = now - static_cast<uint32_t>(sample.last_edge_us / 1000);
             if (now - monitoring_since_[motor] >= kHallSilenceMs &&
                 (!sample.last_edge_us || edge_age >= kHallSilenceMs)) {
+                fault_motor_ = static_cast<int>(motor);
                 fail(PocFault::kHallSilent);
                 return;
             }
@@ -133,6 +136,7 @@ public:
     constexpr bool coast() const { return control_.coast(); }
     constexpr bool lost() const { return lost_; }
     constexpr PocFault fault() const { return fault_; }
+    constexpr int fault_motor() const { return fault_motor_; } // -1 when not a Hall fault
     constexpr uint32_t idle_overruns() const { return idle_overruns_; }
     constexpr uint32_t max_idle_overrun_ms() const { return max_idle_overrun_ms_; }
     constexpr PocOutputs outputs() const
@@ -148,6 +152,7 @@ private:
     }
     BenchControl control_;
     PocFault fault_ = PocFault::kNone;
+    int fault_motor_ = -1;
     uint32_t idle_overruns_ = 0;
     uint32_t max_idle_overrun_ms_ = 0;
     bool sleeping_ = false;

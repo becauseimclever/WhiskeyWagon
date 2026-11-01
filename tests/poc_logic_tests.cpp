@@ -122,6 +122,7 @@ constexpr bool fault_tests()
         one_channel.fault() != PocFault::kHallSilent ||
         invalid.fault() != PocFault::kHallInvalid ||
         healthy.fault() != PocFault::kNone || healthy.drive() != 1) return false;
+    if (silent.fault_motor() != 0 || healthy.fault_motor() != -1) return false;
     silent.connection_reset();
     silent.report({}, 1700);
     silent.report({true}, 1710);

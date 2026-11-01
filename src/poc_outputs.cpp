@@ -49,8 +49,13 @@ void apply_poc_outputs(PocOutputs outputs)
     if (!driving) gpio_put(kStandbyPin, false);
     for (unsigned int motor = 0; motor < 2; ++motor) {
         const int duty = outputs.motor_permille[motor];
-        pwm_set_both_levels(pwm_gpio_to_slice_num(kMotorInputPins[motor * 2]),
-                            duty > 0 ? duty : 0, duty < 0 ? -duty : 0);
+        // DRV8833 slow decay: hold one input high and PWM the other, so the off phase
+        // brakes instead of coasting. Fast decay at 20 kHz did not start the geared motors
+        // even at 50%. Zero demand keeps both inputs low (coast).
+        const int magnitude = duty < 0 ? -duty : duty;
+        const int in1 = duty > 0 ? 1000 : duty < 0 ? 1000 - magnitude : 0;
+        const int in2 = duty < 0 ? 1000 : duty > 0 ? 1000 - magnitude : 0;
+        pwm_set_both_levels(pwm_gpio_to_slice_num(kMotorInputPins[motor * 2]), in1, in2);
     }
     pwm_set_gpio_level(kServoPin, outputs.servo_us);
     if (driving) gpio_put(kStandbyPin, true);

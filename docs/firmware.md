@@ -44,10 +44,14 @@ mixing until encoder/steering geometry calibration supports them.
   synchronous Bluetooth initialization while outputs are still zero. Reset-time
   inhibition requires hardware biasing; watchdog reset is not a mechanical brake.
 
-`poc_outputs.cpp` owns motor PWM slices 3/4 at nominal 20 kHz (TOP=999);
-positive/negative electrical commands set only one input of each pair, and zero
+`poc_outputs.cpp` owns motor PWM slices 3/4 at nominal 20 kHz (TOP=999).
+Nonzero commands use DRV8833 slow decay: forward holds xIN1 high and PWMs xIN2
+at 1-duty, reverse mirrors it, so the off phase brakes rather than coasts.
+The first integrated test (2026-11-01) faulted Hall-silent with fast-decay PWM at
+the 25% cap and zero Hall edges on both motors; fast decay also failed to start the
+right motor at 50% on 2026-10-30. Zero
 sets both low. STBY is low when drive duty is zero, high only after applying
-nonzero duty. There is no active braking. SG92R uses slice 1 on GP2, nominal
+nonzero duty. There is no stop braking. SG92R uses slice 1 on GP2, nominal
 50 Hz with 1 us counts. Boot starts with all outputs low. In a powered image,
 the first control tick starts the verified center pulse; sleep/fault stops pulses.
 Y output changes are applied in the input callback as well as on the next tick.

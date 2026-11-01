@@ -242,9 +242,11 @@ void on_control_tick(btstack_timer_source_t* timer)
                      WHISKEY_POC_ACTUATORS_VERIFIED != 0);
         apply_poc_outputs(control.outputs());
         if (control.fault() != previous_fault)
-            printf("ERROR: latched POC fault=%u elapsed_ms=%lu; motors coast, servo off; "
-                   "reboot required\n",
-                   static_cast<unsigned int>(control.fault()), static_cast<unsigned long>(elapsed));
+            printf("ERROR: latched POC fault=%u motor=%s elapsed_ms=%lu; motors coast, "
+                   "servo off; reboot required\n",
+                   static_cast<unsigned int>(control.fault()),
+                   control.fault_motor() == 0 ? "left" : control.fault_motor() == 1 ? "right" : "-",
+                   static_cast<unsigned long>(elapsed));
 #else
         control.tick(elapsed);
 #endif

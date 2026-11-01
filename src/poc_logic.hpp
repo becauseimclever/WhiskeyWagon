@@ -56,9 +56,15 @@ public:
                         const std::array<EncoderSnapshot, 2>& encoders, bool monitor_hall)
     {
         if (fault_ != PocFault::kNone || sleeping_) return;
-        if (elapsed > 100) {
-            fail(PocFault::kControlOverrun);
-            return;
+        if (elapsed > kControlOverrunMs) {
+            // A stall only risks stale motor output while drive is nonzero; Bluetooth
+            // setup and pairing can stall the run loop while the wagon is idle.
+            if (control_.drive() != 0) {
+                fail(PocFault::kControlOverrun);
+                return;
+            }
+            ++idle_overruns_;
+            if (elapsed > max_idle_overrun_ms_) max_idle_overrun_ms_ = elapsed;
         }
         if (have_report_ && now - last_report_ms_ >= kPocReportTimeoutMs) {
             connection_reset();
@@ -127,6 +133,8 @@ public:
     constexpr bool coast() const { return control_.coast(); }
     constexpr bool lost() const { return lost_; }
     constexpr PocFault fault() const { return fault_; }
+    constexpr uint32_t idle_overruns() const { return idle_overruns_; }
+    constexpr uint32_t max_idle_overrun_ms() const { return max_idle_overrun_ms_; }
     constexpr PocOutputs outputs() const
     {
         return poc_outputs(drive(), steering(), !sleeping_ && fault_ == PocFault::kNone);
@@ -140,6 +148,8 @@ private:
     }
     BenchControl control_;
     PocFault fault_ = PocFault::kNone;
+    uint32_t idle_overruns_ = 0;
+    uint32_t max_idle_overrun_ms_ = 0;
     bool sleeping_ = false;
     bool have_report_ = false;
     bool lost_ = true;

@@ -90,7 +90,8 @@ void on_input(const BluetoothInput* input)
                     (input->buttons & kReverseButtonMask) != 0,
                     (input->buttons & kCoastButtonMask) != 0,
                     (input->dpad & (1u << 3)) != 0,
-                    (input->dpad & (1u << 2)) != 0};
+                    (input->dpad & (1u << 2)) != 0,
+                    stick_steering(input->axes[0])};
 #if WHISKEY_WAGON_POC
     control.report(drive_input, btstack_run_loop_get_time_ms());
     apply_poc_outputs(control.outputs());
@@ -131,14 +132,16 @@ void print_status(uint64_t now)
     const auto* input = bluetooth_input();
     printf("poc t_ms=%llu enabled=%u link=%s lost=%u qualified=%u fault=%u "
            "demand_duty=%d,%d demand_servo_us=%u reports=%lu age_ms=%lu max_gap_ms=%lu "
-           "encoder=%u rpm=UNCALIBRATED\n",
+           "encoder=%u idle_stalls=%lu max_idle_stall_ms=%lu rpm=UNCALIBRATED\n",
            static_cast<unsigned long long>(now), WHISKEY_POC_ACTUATORS_VERIFIED,
            lifecycle_started ? mode_name(lifecycle.mode()) : "starting",
            control.lost(), control.qualified(), static_cast<unsigned int>(control.fault()),
            outputs.motor_permille[0], outputs.motor_permille[1], outputs.servo_us,
            static_cast<unsigned long>(input->reports),
            static_cast<unsigned long>(btstack_run_loop_get_time_ms() - input->last_report_ms),
-           static_cast<unsigned long>(input->max_gap_ms), WHISKEY_ENCODER_CAPTURE_VERIFIED);
+           static_cast<unsigned long>(input->max_gap_ms), WHISKEY_ENCODER_CAPTURE_VERIFIED,
+           static_cast<unsigned long>(control.idle_overruns()),
+           static_cast<unsigned long>(control.max_idle_overrun_ms()));
 #if WHISKEY_ENCODER_CAPTURE_VERIFIED
     const auto snapshots = encoder_snapshot();
     printf("hall left_x4=%lld right_x4=%lld invalid=%lu,%lu edge_us=%llu,%llu\n",
@@ -239,8 +242,9 @@ void on_control_tick(btstack_timer_source_t* timer)
                      WHISKEY_POC_ACTUATORS_VERIFIED != 0);
         apply_poc_outputs(control.outputs());
         if (control.fault() != previous_fault)
-            printf("ERROR: latched POC fault=%u; motors coast, servo off; reboot required\n",
-                   static_cast<unsigned int>(control.fault()));
+            printf("ERROR: latched POC fault=%u elapsed_ms=%lu; motors coast, servo off; "
+                   "reboot required\n",
+                   static_cast<unsigned int>(control.fault()), static_cast<unsigned long>(elapsed));
 #else
         control.tick(elapsed);
 #endif

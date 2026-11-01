@@ -987,8 +987,10 @@ Do not flash a powered POC onto the current externally enabled STBY arrangement.
 
    No serial arm/stop command exists in either console. Select Micro
    D-input mode and pair with only the intended controller discoverable.
-3. Verify physical B/X/Y against raw `buttons`, D-pad against raw `dpad`.
+3. Verify physical B/X/Y against raw `buttons`, D-pad against raw `dpad` or,
+   in modes that emulate the left stick, raw `axes[0]` (left -512, right +511).
    Candidate masks are B=0x0001, X=0x0008, Y=0x0004, left=0x08, right=0x04.
+   Either D-pad bits or `axes[0]` beyond the ±64 deadzone steer.
    Correct board configuration if observation differs before any powered build.
 4. Verify held-at-connect cannot drive; neutral then fresh B/X can. Exercise
    overlaps, same-report ties, winning-button release, Y while B/X remains held,
@@ -1033,6 +1035,22 @@ After all gates pass, use a **separate build directory** and explicitly set
 and the measured settings listed in [firmware configuration](firmware.md#poc-configuration-and-verification-gate).
 Build `whiskey_wagon_poc`; inspect its startup configuration before applying power.
 There is no unattended startup drive and no operator arming command.
+
+Bench integration image used for the first controller-driven test (USB console,
+servo endpoints ±300 us around the measured 1472 us midpoint of the Arduino
+544-2400 us range, linkage not installed, 25% duty cap):
+
+```sh
+cmake -S . -B build-poc-powered -DWHISKEY_BUILD_POC=ON \
+  -DWHISKEY_POC_ACTUATORS_VERIFIED=ON -DWHISKEY_ENCODER_CAPTURE_VERIFIED=ON \
+  -DWHISKEY_POC_USB_CONSOLE=ON -DWHISKEY_POC_SERVO_LEFT_US=1172 \
+  -DWHISKEY_POC_SERVO_CENTER_US=1472 -DWHISKEY_POC_SERVO_RIGHT_US=1772
+cmake --build build-poc-powered --target whiskey_wagon_poc
+```
+
+Swap the left/right endpoints if the horn turns the wrong way once the linkage
+is installed. GP14 must drive STBY in this image; remove any external STBY tie
+with all power off first.
 
 Test each direction briefly with lifted wheels, then Y, release, reversal,
 disconnect, pairing sleep and watchdog/reset behavior. Verify actual outputs,
@@ -1091,4 +1109,5 @@ software test candidates, not accepted hardware limits.
 | TBD | Bluetooth library readiness | Current bench sequence above; all actuator power disconnected, automatic pairing/reconnect expected | Not run |
 | TBD | Output-only UART baseline and electrical checks | Procedure above; owner-reported P1 wiring, VM disconnected; USB stdio and commands removed | Pending UART TX logs, operation without a listener, physical GPIO measurements, and reset observations |
 | TBD | Bluetooth/controller compatibility | Dependencies pinned, 8BitDo Micro D-input selected; actual pairing, mapping, report timing and persistence evidence pending | Not run |
+| 2026-11-01 | Controller pairing and raw buttons over USB console | `build-poc-usb` image (`WHISKEY_POC_USB_CONSOLE=ON`, actuators inhibited), SHA-256 `19EC66D881DEC084002CF2D629CE3BD6322F5B9B289AE889E48598F86A58F898`; motor and servo power off; owner-reported Micro mode "X-input". Log: ignored `bench-logs/controller-2026-11-01-usb.log`. | Paired over Classic BR/EDR; identified as `8BitDo Zero 2 gamepad`, VID/PID 045e:02e0, detected by Bluepad32 as Xbox Wireless. B=0x0001, A=0x0002, Y=0x0004, X=0x0008, matching candidate B/X/Y masks. D-pad arrived as left-stick axes (left/up -512, right/down +511) with `dpad=0x00`, so the D-pad steering mapping does not work in this mode. Fault 4 (control overrun) was latched before the console connected; cause not yet investigated. Neither report cadence nor persistence was assessed. |
 | TBD | Hardware and motion verification | P1 driver wiring owner-reported; electrical interface and powered operation not verified | Not run |

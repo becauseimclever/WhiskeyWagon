@@ -148,6 +148,25 @@ constexpr bool independent_steering_tests()
 }
 static_assert(independent_steering_tests());
 
+static_assert(stick_steering(0) == 0 && stick_steering(64) == 0 && stick_steering(-64) == 0);
+static_assert(stick_steering(-512) == -1 && stick_steering(511) == 1);
+static_assert(stick_steering(300) > 0 && stick_steering(300) < 1);
+
+constexpr bool axis_steering_tests()
+{
+    BenchControl control;
+    control.report({false, false, false, false, false, stick_steering(-512)});
+    control.tick(500);
+    if (control.steering() != -1 || control.drive() != 0) return false;
+    control.report({false, false, false, false, true, stick_steering(-512)});
+    control.tick(1000);
+    if (control.steering() != 1) return false;
+    control.report({false, false, false, false, false, stick_steering(20)});
+    control.tick(500);
+    return control.steering() == 0;
+}
+static_assert(axis_steering_tests());
+
 constexpr bool encoder_tests()
 {
     EncoderCounter counter;

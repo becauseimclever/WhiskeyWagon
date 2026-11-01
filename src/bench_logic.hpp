@@ -78,9 +78,23 @@ struct DriveInput {
     bool stop = false;
     bool left = false;
     bool right = false;
+    float steering_axis = 0; // -1 (left) .. 1 (right); used when no D-pad direction is held.
 };
 
 constexpr float magnitude(float value) { return value < 0 ? -value : value; }
+
+// Bluepad32 reports stick axes in -512..511. Controllers in Xbox mode also report
+// the 8BitDo D-pad here, so both the stick and the D-pad steer through this path.
+constexpr float stick_steering(int32_t axis)
+{
+    constexpr int32_t kDeadzone = 64;
+    constexpr int32_t kFullScale = 511;
+    const int32_t size = axis < 0 ? -axis : axis;
+    if (size <= kDeadzone) return 0;
+    float value = static_cast<float>(size - kDeadzone) / (kFullScale - kDeadzone);
+    if (value > 1) value = 1;
+    return axis < 0 ? -value : value;
+}
 
 class SmoothRamp {
 public:
@@ -128,7 +142,9 @@ public:
     }
     constexpr void report(DriveInput input)
     {
-        steering_target_ = input.left == input.right ? 0 : input.left ? -1 : 1;
+        steering_target_ = input.left || input.right
+                               ? (input.left == input.right ? 0 : input.left ? -1 : 1)
+                               : input.steering_axis;
         if (!qualified_) {
             qualified_ = !input.forward && !input.reverse && !input.stop;
             previous_ = input;

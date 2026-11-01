@@ -36,7 +36,10 @@ mixing until encoder/steering geometry calibration supports them.
   Low-duty silence is not diagnosed. Single-channel toggling is not treated as
   healthy feedback. Both motors coast and servo pulses stop on a latched fault.
   Only reboot clears a fault; new controller reports cannot clear it.
-- A control tick elapsed time >100 ms latches an overrun fault. A 200 ms hardware
+- A control tick elapsed time >100 ms while drive demand is nonzero latches an
+  overrun fault. While idle, a stall cannot leave stale motor output, so it is only
+  counted (`idle_stalls`, `max_idle_stall_ms` in the status line); Bluetooth
+  startup/pairing stalled the run loop under 200 ms on 2026-11-01. A 200 ms hardware
   watchdog, not paused by a debugger, resets a stalled run loop. It starts after
   synchronous Bluetooth initialization while outputs are still zero. Reset-time
   inhibition requires hardware biasing; watchdog reset is not a mechanical brake.
@@ -285,7 +288,11 @@ by that requirements section; demand ramps are implemented for preview only,
 not physically validated motion.
 
 Use D-input mode. Same-report fresh-press ties resolve Y first, then B, then X;
-opposing D-pad left/right means smooth centering. Y immediately selects coast,
+opposing D-pad left/right means smooth centering. The left-stick X axis
+(`axes[0]`, -512..511, ±64 deadzone, scaled to full lock) also steers when no
+D-pad direction bit is set, so modes that report the D-pad as the left stick
+(the Micro paired as Xbox Wireless on 2026-11-01) still steer with left/right.
+Y immediately selects coast,
 bypassing both release ramp and zero-speed regulation so the closed-loop controller
 does not fight coasting. Controller loss instead synthesizes all-button release:
 normal drive deceleration and smooth steering centering. Encoder failure stops

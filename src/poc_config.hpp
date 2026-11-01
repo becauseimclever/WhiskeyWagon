@@ -25,6 +25,7 @@ inline constexpr uint32_t kReversalDwellMs = 250;
 inline constexpr uint32_t kReversalTimeoutMs = 2000;
 inline constexpr uint32_t kHallSilenceMs = 500;
 inline constexpr uint16_t kHallMonitoringDuty = 100;
+inline constexpr uint32_t kControlOverrunMs = 100;
 static_assert(kPocMaxDuty >= kHallMonitoringDuty && kPocMaxDuty <= 1000);
 static_assert(kPocReportTimeoutMs >= 100 && kPocReportTimeoutMs <= 2000);
 static_assert(kServoLeftUs >= 1000 && kServoLeftUs <= 2000);

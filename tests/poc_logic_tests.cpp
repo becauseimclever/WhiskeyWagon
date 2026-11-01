@@ -127,9 +127,18 @@ constexpr bool fault_tests()
     silent.report({true}, 1710);
     silent.tick(1720, 10, moving_encoders(1720), true);
     if (silent.drive() != 0 || silent.outputs().servo_us != 0) return false;
+    PocControl idle;
+    idle.tick(kControlOverrunMs + 1, kControlOverrunMs + 1, {}, false);
+    idle.tick(kControlOverrunMs + 2, kControlOverrunMs, {}, false);
+    if (idle.fault() != PocFault::kNone || idle.idle_overruns() != 1 ||
+        idle.max_idle_overrun_ms() != kControlOverrunMs + 1) return false;
     PocControl overrun;
-    overrun.tick(101, 101, {}, false);
-    return overrun.fault() == PocFault::kControlOverrun;
+    overrun.report({}, 0);
+    overrun.report({true}, 10);
+    overrun.tick(20, 10, {}, false);
+    if (overrun.drive() == 0) return false;
+    overrun.tick(20 + kControlOverrunMs + 1, kControlOverrunMs + 1, {}, false);
+    return overrun.fault() == PocFault::kControlOverrun && overrun.outputs().servo_us == 0;
 }
 static_assert(fault_tests());
 

@@ -68,13 +68,15 @@ passes its wiring, reset, mapping, cadence, polarity and servo gates.
 | `WHISKEY_POC_SERVO_CENTER_US` | 1500 | Provisional center; establish horn alignment with linkage disconnected |
 | `WHISKEY_POC_SERVO_RIGHT_US` | 1600 | Provisional physical-right endpoint; endpoints can be reversed |
 | `WHISKEY_POC_LEFT_INVERTED`, `WHISKEY_POC_RIGHT_INVERTED` | OFF | Change independently after measuring physical-forward polarity with lifted wheels |
+| `WHISKEY_POC_USB_CONSOLE` | OFF | Bench only: route the same output-only diagnostics to USB CDC instead of UART0 when no UART adapter is available. No commands; output requires DTR and is dropped without a host. USB baud-rate/vendor resets are disabled, so use BOOTSEL to reflash |
 
 Servo values must be distinct, center between endpoints, each 1000-2000 us.
 This validation bounds configuration, not actual servo safety; linkage acceptance
 remains mandatory. GP14 must control STBY with verified reset-time inhibition:
 the externally enabled, GP14-disconnected bench arrangement is not supported
-by the powered POC. UART0 on GP0 remains the output-only diagnostic interface;
-USB runtime serial stays disabled. Status separates requested duty/servo pulses
+by the powered POC. UART0 on GP0 remains the default output-only diagnostic
+interface; `WHISKEY_POC_USB_CONSOLE=ON` substitutes an output-only USB CDC console
+for bench use. Status separates requested duty/servo pulses
 from raw Hall counts and explicitly withholds RPM. Fault numbers:
 0=none, 1=Hall invalid, 2=Hall silent, 3=reversal timeout, 4=control overrun.
 Existing raw input logs support tomorrow's physical mapping check.

@@ -144,8 +144,23 @@ if(WHISKEY_BUILD_POC)
     add_dependencies(whiskey_wagon_poc bench_logic_tests poc_logic_tests)
     pico_set_program_name(whiskey_wagon_poc "WhiskeyWagon open-loop POC")
     pico_set_program_version(whiskey_wagon_poc "${PROJECT_VERSION}")
-    pico_enable_stdio_uart(whiskey_wagon_poc 1)
-    pico_enable_stdio_usb(whiskey_wagon_poc 0)
+    option(WHISKEY_POC_USB_CONSOLE
+        "Bench only: send POC diagnostics to USB CDC instead of UART0; output-only, no commands" OFF)
+    target_compile_definitions(whiskey_wagon_poc PRIVATE
+        WHISKEY_POC_USB_CONSOLE=$<BOOL:${WHISKEY_POC_USB_CONSOLE}>)
+    if(WHISKEY_POC_USB_CONSOLE)
+        target_compile_definitions(whiskey_wagon_poc PRIVATE
+            PICO_STDIO_USB_CONNECTION_WITHOUT_DTR=0
+            PICO_STDIO_USB_STDOUT_TIMEOUT_US=1000
+            PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=0
+            PICO_ENABLE_USB_RESET_VIA_BAUD_RATE=0
+            PICO_ENABLE_USB_RESET_VIA_VENDOR_INTERFACE=0)
+        pico_enable_stdio_uart(whiskey_wagon_poc 0)
+        pico_enable_stdio_usb(whiskey_wagon_poc 1)
+    else()
+        pico_enable_stdio_uart(whiskey_wagon_poc 1)
+        pico_enable_stdio_usb(whiskey_wagon_poc 0)
+    endif()
     pico_add_extra_outputs(whiskey_wagon_poc)
 endif()
 

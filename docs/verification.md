@@ -976,7 +976,16 @@ Do not flash a powered POC onto the current externally enabled STBY arrangement.
    Verify the banner says `actuators=INHIBITED`, heartbeat `enabled=0`, and all
    five motor signals stay low; GP2 emits no servo pulses.
 2. Monitor UART0 TX GP0 at 115200/8N1 with a 3.3 V-compatible adapter/shared
-   ground. No USB runtime console or serial arm/stop exists. Select Micro
+   ground. Without an adapter, build a separate USB-console image instead and
+   open the Pico's USB serial port with DTR enabled; it is output-only:
+
+   ```sh
+   cmake -S . -B build-poc-usb -DWHISKEY_BUILD_POC=ON \
+     -DWHISKEY_POC_ACTUATORS_VERIFIED=OFF -DWHISKEY_POC_USB_CONSOLE=ON
+   cmake --build build-poc-usb --target whiskey_wagon_poc
+   ```
+
+   No serial arm/stop command exists in either console. Select Micro
    D-input mode and pair with only the intended controller discoverable.
 3. Verify physical B/X/Y against raw `buttons`, D-pad against raw `dpad`.
    Candidate masks are B=0x0001, X=0x0008, Y=0x0004, left=0x08, right=0x04.

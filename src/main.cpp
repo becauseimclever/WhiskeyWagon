@@ -7,10 +7,14 @@
 #include "btstack_run_loop.h"
 #include "encoder_capture.hpp"
 #include "hardware/watchdog.h"
-#include "pico/stdio_uart.h"
 #include "pico/stdlib.h"
 #if WHISKEY_WAGON_POC
 #include "poc_outputs.hpp"
+#endif
+#if WHISKEY_WAGON_POC && WHISKEY_POC_USB_CONSOLE
+#include "pico/stdio_usb.h"
+#else
+#include "pico/stdio_uart.h"
 #endif
 
 namespace {
@@ -266,12 +270,18 @@ int main()
     gpio_set_dir(kPairingButtonPin, GPIO_IN);
     gpio_pull_up(kPairingButtonPin);
 
+#if WHISKEY_WAGON_POC && WHISKEY_POC_USB_CONSOLE
+    // Output-only bench console; lines are dropped while no host asserts DTR.
+    if (!stdio_usb_init()) panic("USB console initialization failed; outputs inhibited");
+#else
     stdout_uart_init();
+#endif
 #if WHISKEY_WAGON_POC
-    printf("WhiskeyWagon OPEN_LOOP_POC; actuators=%s; no measured RPM or speed regulation.\n"
+    printf("WhiskeyWagon OPEN_LOOP_POC; actuators=%s; console=%s; no measured RPM or speed regulation.\n"
            "Motors: 6 V, 171:1, rated output 35 rpm; running/stall 150/500 mA each.\n"
            "duty_cap=%u report_lease_ms=%lu servo_us=%u,%u,%u; calibration required.\n",
            WHISKEY_POC_ACTUATORS_VERIFIED ? "ENABLED_SUPERVISED_BENCH_ONLY" : "INHIBITED",
+           WHISKEY_POC_USB_CONSOLE ? "USB_CDC" : "UART0",
            kPocMaxDuty, static_cast<unsigned long>(kPocReportTimeoutMs),
            kServoLeftUs, kServoCenterUs, kServoRightUs);
 #else

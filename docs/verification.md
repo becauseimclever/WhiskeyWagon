@@ -58,6 +58,219 @@ Record actual measurements and serial logs before marking this test passed.
 Do not connect batteries or motors based on a successful serial/GPIO test.
 STBY compatibility/biasing, power design, and motion policies remain blocked.
 
+## Servo-only USB bench test
+
+The owner reports the SG92R connected as of 2026-11-01; electrical compatibility
+and pulse timing remain unverified. This optional `servo_test` image is separate
+from both the inhibited baseline and the POC; it does not initialize Bluetooth,
+UART0 or the Hall inputs. After initialization GP6-GP9 are held low, but GP14
+is untouched and STBY is uncontrolled. **Disconnect motor power**; low GPIO
+commands are not a substitute for power isolation or reset-time biasing.
+The [servo timing references](hardware.md#servo-timing-references) explain the
+nominal 20 ms frame and 1500 us starting pulse; they do not establish this
+linkage's safe endpoints.
+
+Build the disarmed test image in the existing build directory:
+
+```powershell
+cmake -S . -B build -DWHISKEY_BUILD_SERVO_TEST=ON
+cmake --build build --target servo_test
+```
+
+The option defaults OFF. Building does not attest that the servo bench is safe
+and does not flash or energize anything. The output is `build/servo_test.uf2`;
+select this test image explicitly, not the normal firmware. To remove the test
+target from the build configuration after producing the image, run
+`cmake -S . -B build -DWHISKEY_BUILD_SERVO_TEST=OFF`.
+
+Before connecting or powering the servo:
+
+- Keep motor and servo power disconnected while flashing, wiring, changing the
+  linkage, or inspecting connections. Leave the servo horn/linkage disconnected
+  for the initial test; even a nominal center command can move the servo.
+- Verify the signal-level interface for the actual SG92R; the manufacturer's
+  listed specifications do not establish its 3.3 V input-high threshold, 50 Hz
+  frame, or pulse endpoints. Review the provisional timing before approving an
+  unloaded trial. Use an appropriate verified interface if needed, and do not
+  feed a 4.8 V signal back into the Pico GPIO.
+- Provide a separately regulated, appropriately current-limited **4.8 V** servo
+  supply with a suitable current budget and accessible physical disconnect.
+  Do not power the servo from GP2 or the Pico 3V3 output. Resolve USB/supply
+  backfeed and reset-time signal behavior before applying servo power.
+- With all power off, verify the planned yellow signal to GP2 (Pico physical
+  pin 4), orange/red supply lead to regulated 4.8 V, and brown ground lead to
+  the common ground/servo-current return. Confirm actual lead functions and
+  polarity rather than relying on color alone.
+
+After a physical test is explicitly approved, flash the image with both
+actuator supplies off. The GP2-only waveform check can be performed with the
+servo disconnected before its signal compatibility is established; complete
+the gates above before connecting or powering the servo. The test image
+disables USB baud-rate and vendor-interface resets; use BOOTSEL to change
+firmware. Open the Pico's USB serial port at 115200, 8N1 with **DTR enabled**,
+no flow control, and CR or LF line endings.
+Wait for `READY`: pending input is discarded on each connection. There is no
+echo or line editing.
+
+| Command | Result |
+| --- | --- |
+| `help` / `status` | Show limits or requested state; neither measures the waveform |
+| `arm` | Permit one burst for up to 5 seconds |
+| `pulse 1500` | Request a nominal 1500 us pulse every 20 ms for up to 1 second; consumes the arm |
+| `pulse NNNN` | Request exactly four decimal digits within 0544-2400 us (Arduino Servo default range); each burst needs a fresh arm |
+| `stop` | Inhibit the signal and disarm |
+| `!` or Ctrl-C | Inhibit immediately; discard the rest of the line, so send Enter before the next command |
+
+Unknown, malformed, non-printable, overlong or out-of-range commands inhibit
+the signal and disarm with an error. Each stopped burst requires a 500 ms
+cooldown. USB DTR loss also inhibits and disarms; the next connection starts
+disarmed. A timer alarm switches GP2 to a low GPIO output at the nominal burst
+deadline, and a 200 ms watchdog resets a stalled loop. These are software
+protections to verify, not guarantees of electrical or mechanical stopping:
+the servo can remain powered, hold position or behave differently when pulses
+cease. Keep the physical disconnect accessible.
+
+1. With the servo signal and servo power still disconnected, use a suitable
+   oscilloscope/logic analyzer and common ground to check GP2. Verify idle low,
+   rejection without arming, nominal 20 ms frame and the requested pulse width,
+   burst duration, `stop`, `!`, DTR loss and disarmed reconnect. Record measured
+   timing; a console message or successful build is not waveform evidence.
+2. With power off, connect the verified servo interface and 4.8 V supply, keeping
+   the linkage disconnected. After an explicit go-ahead, apply servo power and
+   request one center burst. Observe actual movement, supply stability and
+   heating; stop and disconnect power if there is humming, binding, unexpected
+   travel or other abnormal behavior.
+3. Use separately armed bursts to establish direction and unloaded range.
+   The [endpoint sweep](#unloaded-endpoint-sweep-2026-11-01) found the
+   544-2400 us library range reachable without stalling (midpoint 1472 us);
+   the servo's mechanical end stops were not located.
+4. With power off, align the horn at the verified center and reconnect the
+   linkage. Separately approve and check limited travel without binding before
+   using any values in the POC. Leave motor power off for the servo test.
+
+To leave the test image, disconnect servo and motor power before flashing the
+normal image. That image drives GP14 low: do not connect GP14 to an externally
+driven-high STBY. Servo wiring is owner-reported. The unloaded servo range is
+characterized below; waveform timing and linkage travel remain unmeasured.
+
+### Initial servo USB and unloaded test, 2026-11-01
+
+The owner reported the servo connected to a regulated 4.8 V source, with the
+horn/linkage detached and motor and servo power off for flashing. Signal-level
+compatibility was not verified and no oscilloscope or logic analyzer was
+available. After reviewing those uncertainties, the owner explicitly approved
+one unloaded trial; this exception does not establish the interface gate.
+
+Flashed `servo_test.uf2` via BOOTSEL, then opened COM7. The first serial open
+received no banner; toggling DTR produced the disarmed banner. Six idle status
+checks and a DTR reconnect reported GP2 commanded low, motor inputs commanded
+low and GP14 untouched. GPIO voltage was not measured.
+
+With the servo supply on and motor power off, sent exactly one fresh `arm`
+followed by `pulse 1500`. The console reported `active=1`, `requested_us=1500`,
+and then `BURST_DONE`; the host observed completion after 1.067 seconds, which
+is not a waveform or physical stopping-time measurement. Final status reported
+`armed=0`, `active=0` and GP2 commanded low; COM7 was closed. The owner observed
+the output shaft rotate and then switched servo power off. Direction could not
+be determined without a horn. Center, endpoints, actual voltage, pulse timing
+and reliable 3.3 V signal compatibility remain unverified.
+
+The tested image was a dirty tree based on `d2e5b2e`, Pico SDK 2.3.1 commit
+`079c6f39023649b154152db30f1d781e884879bc`, Arm 15_2_Rel1, Release, Pico W
+board revision unknown. UF2 SHA-256:
+`F3D71AA06FD3A89D05A34E7B92946599BD11ED4EB13B17E08D71C8D3F4F53285`.
+Console logs are retained locally under ignored `bench-logs/servo/`.
+
+### Horn-visible reference, 2026-11-01
+
+The owner fitted the horn without connecting the steering linkage and confirmed
+servo power on, motor power off, clear travel and an accessible disconnect.
+Sent one manually armed `pulse 1500` using the same image. The console reported
+the requested pulse active, followed by `BURST_DONE`; the host observed
+completion after 1.067 seconds. Final status reported disarmed and GP2
+commanded low, and COM7 was closed. These reports do not measure the waveform.
+
+The owner reported that the horn stayed still, perpendicular to the servo body.
+This is a visible reference for later comparisons, not proof of mechanical
+center, travel or direction. The owner reported servo power still on after the
+test; stopping the signal does not remove power. No additional burst was sent
+during that reference test.
+Log: `bench-logs/servo/2026-11-01-horn-reference1500.log` (local and ignored).
+
+### Horn direction step, 2026-11-01
+
+After the 1500 us reference, the owner separately approved one unloaded
+`pulse 1550` burst. The console reported the request active and then complete;
+the host observed completion after 1.089 seconds. Final status reported
+disarmed and GP2 commanded low; COM7 was closed. This is not a waveform
+measurement, and stopping the signal does not remove servo power.
+
+The owner reported a barely noticeable counterclockwise movement when viewed
+from the horn face: the left end moved down and the right end moved up. The
+servo was audible as it moved. This records the observed response to the
+1500-to-1550 us change, not an angle measurement, linkage direction or safe
+endpoint. Servo power was still on according to the owner; motor power remained
+off. Log: `bench-logs/servo/2026-11-01-horn-step1550.log` (local and ignored).
+
+### Horn reverse step, 2026-11-01
+
+The owner requested an approximately -90-degree test and approved one initial
+`pulse 1450` burst toward the lower nominal pulse widths. The owner confirmed
+the unloaded horn was clear, the regulated 4.8 V servo supply was on, motor
+power was off and the supply disconnect was accessible. The console reported
+one burst request and completion; the host observed completion after 1.001
+seconds. Final status reported disarmed and GP2 commanded low; COM7 was closed.
+Neither the waveform nor servo power removal was measured.
+
+Viewed from the horn face, the owner observed clockwise movement, ending
+nearly perpendicular to the servo body again, without continued buzzing or
+binding. The servo supply remained on according to the owner. This is not a
+measured angle, physical center or endpoint. No further burst was sent during
+this step. Log: `bench-logs/servo/2026-11-01-horn-step1450.log` (local and
+ignored).
+
+### Horn lower step, 2026-11-01
+
+The owner approved one `pulse 1400` burst and requested observed checks in both
+directions before a single sweep between established limits. The console
+reported one burst request and completion; the host observed completion after
+1.002 seconds. Final status reported disarmed and GP2 commanded low; COM7 was
+closed.
+
+The owner reported the horn slightly off perpendicular but was unsure of its
+movement direction. There was no continued buzzing or binding, and the servo
+supply remained on according to the owner. The waveform, physical angle and
+endpoints remain unmeasured; no sweep was performed in this step. Log:
+`bench-logs/servo/2026-11-01-horn-step1400.log` (local and ignored).
+
+### Unloaded endpoint sweep, 2026-11-01
+
+The test image was widened to the Arduino Servo library's default 544-2400 us
+range, rebuilt (UF2 SHA-256
+`AD42D709E8BADADFF7FDC8D9821E606890B6F690CDBB20A1DCA957A91BB449A6`) and
+flashed via BOOTSEL with servo and motor power off. With the unloaded horn, the
+4.8 V servo supply on and motor power off, one one-second burst was sent per step.
+Each burst ended with a disarmed status and GP2 commanded low. The owner
+reported these positions, viewed from the horn face:
+
+| Pulse (us) | Owner observation |
+| --- | --- |
+| 1000 | About 90 degrees clockwise from the 1500 us perpendicular reference; stopped quietly |
+| 750 | Movement unclear; stopped quietly |
+| 544 | Clearly farther clockwise; roughly parallel to the servo body; stopped quietly |
+| 2000 | About 90 degrees counterclockwise past perpendicular; stopped quietly |
+| 2400 | Clearly farther counterclockwise; roughly parallel to the servo body; stopped quietly |
+| 1472 | Midpoint of 544 and 2400; close to perpendicular but visibly off |
+
+Result: the full library range gives about 180 degrees of unloaded travel,
+with lower pulses turning clockwise. No stall or buzzing was heard at either
+end. 544 and 2400 us are the limits of the tested library range, not
+confirmed mechanical end stops: pulses beyond them were not tested, so the
+servo may travel farther. The working center is taken as **1472 us**, the
+midpoint of the tested range; horn spline steps mean the horn may not sit
+exactly perpendicular there. Angles are rough visual estimates. Logs:
+`bench-logs/servo/2026-11-01-endpoint*.log` and `...-center1472.log`.
+
 ## Right-motor USB bench test
 
 This is the optional `right_motor_test` image, not the inhibited-only
@@ -210,7 +423,8 @@ Console used COM7, 115200, DTR enabled.
 Final five-second-capable UF2 SHA-256:
 `7D72ACE745B69EFD859488EEFFE7D08A5CE7EBD5248D0A5C3BB8CFF71A69E19B`.
 Intermediate short-pulse checks used earlier revisions from the same session.
-Generated serial logs are in the ignored `build-right-motor/` directory:
+Generated serial logs are retained locally in the ignored `bench-logs/motor/`
+directory, not committed:
 `bench-no-motion.log`, `bench-usb-disarm.log`, `bench-forward.log`,
 `bench-reverse.log`, `bench-forward50.log`, `bench-forward50long.log`.
 
@@ -252,8 +466,8 @@ The tentative position delta remained positive in the reported reverse test,
 so consistent quadrature direction is **not verified**. A controlled,
 single-direction capture in each direction is needed before relying on signed
 position or RPM. The reverse turn count was unspecified; do not derive encoder
-resolution from these measurements. Logs: `build-right-motor/bench-hall-manual.log`
-and `build-right-motor/bench-hall-manual-reverse.log`. Serial port closed after
+resolution from these measurements. Logs: `bench-logs/motor/bench-hall-manual.log`
+and `bench-logs/motor/bench-hall-manual-reverse.log`. Serial port closed after
 the check; motor left disarmed.
 
 ### Post-bridge repair check, 2026-10-30
@@ -272,7 +486,7 @@ This differs from the earlier high STBY readbacks and requires electrical
 investigation before further powered tests. Neither a residual load/short nor
 GPIO damage is established by this log.
 
-Log: `build-right-motor/bench-post-bridge-forward50long.log`.
+Log: `bench-logs/motor/bench-post-bridge-forward50long.log`.
 Final explicit stop confirmed disarmed, STBY readback 0 and PWM compare levels
 zero; COM7 was closed. No motor-driven rotation demonstrated.
 
@@ -296,7 +510,7 @@ Floating STBY may leave the driver disabled; its actual voltage was not measured
 Owner subsequently clarified that motor power was still disconnected during
 this first floating-STBY pulse, so it is not evidence about powered driver
 behavior.
-Log: `build-right-motor/bench-floating-stby-forward50long.log`.
+Log: `bench-logs/motor/bench-floating-stby-forward50long.log`.
 Final explicit stop confirmed disarmed with both PWM compare levels zero;
 COM7 closed. STBY is uncontrolled, not asserted low, in this flashed variant.
 
@@ -306,7 +520,7 @@ Completion was observed at exactly 5000 ms; Hall deltas remained A=0/B=0,
 tentative x4=0, invalid=0. PWM compare was 500,0 during the pulse and 0,0
 afterward. Supply voltage and floating STBY voltage were not measured during
 this repeat, and physical motion was not independently observed.
-Log: `build-right-motor/bench-floating-stby-powered-repeat.log`.
+Log: `bench-logs/motor/bench-floating-stby-powered-repeat.log`.
 Final explicit stop confirmed disarmed with PWM zero; COM7 closed.
 
 ### No-serial boot-pulse check, 2026-10-30
@@ -402,7 +616,7 @@ Signs reverse as expected, but counts/revolution are not repeatable, and both
 windows contain a small number of opposite steps. Both calibrations were
 explicitly rejected. Do not adopt a guessed 12 counts/revolution from these
 observations. Logs: `hall-calibration-clockwise.log` and
-`hall-calibration-counterclockwise.log` in `build-right-motor/`.
+`hall-calibration-counterclockwise.log` in `bench-logs/motor/`.
 
 Owner approved separate forward/reverse 5 s/50% pulses. Forward registered only
 one negative step and reverse four positive steps, then zero sustained rate;
@@ -424,7 +638,7 @@ Pulse-average observed rates are approximately -4253/+4312 x4 counts/s;
 these include acceleration and the software snapshot boundary, not a
 steady-state speed measurement. Subsequent logs contain coast-down edges.
 Absolute motor/output RPM remains uncalibrated, not zero or guessed.
-Log: `build-right-motor/hall-full-duty-direction-speed.log`.
+Log: `bench-logs/motor/hall-full-duty-direction-speed.log`.
 
 Final explicit stop confirmed PWM zero and disarmed; USB port closed. The
 interactive image remains flashed, with external STBY uncontrolled by firmware.
@@ -459,7 +673,7 @@ on both channels during a reference-marked revolution or an independent
 tachometer to distinguish acquisition/signal issues from turn-count issues.
 Do not force or loosen the encoder magnet.
 
-Logs in `build-right-motor/`: `hall-calibration-repeat1-start.log`,
+Logs in `bench-logs/motor/`: `hall-calibration-repeat1-start.log`,
 `hall-calibration-repeat1-result.log`, `hall-single-magnet-ccw1.log`,
 `hall-single-magnet-cw1.log`, `hall-calibration-stationary.log`, and
 `hall-single-magnet-ccw-aligned.log`.
@@ -507,7 +721,7 @@ Both intended directions and subsequent timeout states were observed. A brief
 positive activity after the negative run was also captured; its mechanical
 cause was not established, so this is not evidence of perfectly noise-free
 direction at rest. Final cumulative invalid transitions were zero.
-Log: `build-right-motor/hall-motion-manual-live.log`. Final state disarmed,
+Log: `bench-logs/motor/hall-motion-manual-live.log`. Final state disarmed,
 PWM compare 0,0, GP14 untouched; COM7 closed. Automatic startup remains OFF.
 No powered tests were authorized or executed as part of this feedback check.
 
@@ -546,8 +760,8 @@ Simultaneous two-motor rotation is therefore NOT verified. Left PWM configuratio
 readback is not proof of a signal at the driver or voltage across its output.
 Next investigate the left input/output path or test that channel separately,
 with further powered tests requiring explicit approval.
-Logs: `build-right-motor/dual-motor-unarmed.log` and
-`build-right-motor/dual-motor-full-duty.log`.
+Logs: `bench-logs/motor/dual-motor-unarmed.log` and
+`bench-logs/motor/dual-motor-full-duty.log`.
 Owner requested one repeat while measuring voltage. Both bridge compare pairs
 again read 1000,0 during the 1000 ms pulse and zero after explicit stop. Right
 Hall delta was -4206 x4, with zero invalid transitions. Across left AO1/AO2
@@ -555,7 +769,7 @@ Hall delta was -4206 x4, with zero invalid transitions. Across left AO1/AO2
 the value; neither motor's physical motion was observed for this repeat.
 This establishes an owner-observed voltage change, not measured output
 amplitude, current or left-motor rotation.
-Log: `build-right-motor/dual-motor-voltage-repeat.log`.
+Log: `bench-logs/motor/dual-motor-voltage-repeat.log`.
 Manual image left flashed, automatic startup OFF, both PWM pairs zero, disarmed,
 GP14 untouched; COM7 released.
 
@@ -579,7 +793,7 @@ only the driver's outputs before concluding the motor itself is faulty.
 No current measurement or left Hall capture was made. Right Hall zero counts
 are expected in this left-only test, not evidence about the left motor.
 
-Log: `build-right-motor/left-only-voltage-test.log`. Final state disarmed,
+Log: `bench-logs/motor/left-only-voltage-test.log`. Final state disarmed,
 both PWM pairs zero, GP14 untouched, automatic startup OFF, COM7 closed.
 Before more powered attempts, disconnect USB and motor supply and inspect
 left motor leads/terminals and shaft freedom without forcing the gearbox;
@@ -592,7 +806,7 @@ left compare was 1000,0 and right remained 0,0, followed by both pairs zero.
 Owner observed **left motor spun and coasted to a stop**. No voltage reading
 was captured. This confirms left-only powered rotation after the harness fix;
 simultaneous rotation still requires a separate repeat. Left Hall capture remains
-disabled. Log: `build-right-motor/left-only-post-harness-repair.log`.
+disabled. Log: `bench-logs/motor/left-only-post-harness-repair.log`.
 Final state disarmed, PWM zero on both bridges, COM7 closed.
 
 Owner requested the next simultaneous test after the successful left-only
@@ -605,7 +819,7 @@ Owner confirmed **both motors spun together and coasted to a stop**, with no
 other reported symptoms. Thus simultaneous unloaded 100% operation has
 owner-observed confirmation following the harness repair; left Hall feedback,
 loaded operation, current and supply sag were not measured.
-Log: `build-right-motor/dual-motor-post-harness-repair.log`.
+Log: `bench-logs/motor/dual-motor-post-harness-repair.log`.
 Final state disarmed, both PWM pairs zero, GP14 untouched, automatic startup
 OFF, COM7 released.
 
@@ -858,6 +1072,13 @@ software test candidates, not accepted hardware limits.
 | 2026-10-25 | Default bench artifact identity/static gates | `build/whiskey_wagon.uf2`, 1,225,728 bytes, SHA-256 `37CCA9FA7DBA1BD313E813E54A3878FF1F8DE35037DE738D30AD6EE2C97B95C1`; ELF text 616,916 bytes, BSS 38,872 bytes | UART/controller/timer symbols present; no USB stdio, input menu, PWM init or default encoder edge ISR symbols; ISR present only in capture-ON Debug build; static checks do not prove electrical behavior |
 | 2026-10-31 | First open-loop POC software verification | SDK 2.3.1, Arm 15_2_Rel1; Release default + POC, Debug existing USB motor diagnostic, separate powered compile check with inverted motor/servo and 1000-permille cap; 100-permille cap / 100 ms lease boundary build also passed | Existing bench and seven POC constexpr suites passed, no compiler warnings; powered build without encoder verification rejected as expected. Validation images restored to inhibited outputs/capture OFF. No flash or hardware test |
 | 2026-10-31 | Inhibited POC artifact identity | `build/whiskey_wagon_poc.uf2`, 1,228,288 bytes, SHA-256 `095701F0A17113B44685FC39C1A9A67D6E647DE05FA7313FA81A7003641B6C7D` | POC init/watchdog symbols present; inhibited image contains no motor/servo PWM init/set or USB stdio init symbols. Original image also retains static PWM/USB inhibition. Static checks do not validate electrical levels or physical stop behavior |
+| 2026-11-01 | Servo USB idle and reconnect | Owner-reported Pico W, board revision unknown; dirty tree based on `d2e5b2e`, SDK 2.3.1 commit `079c6f39023649b154152db30f1d781e884879bc`, Arm 15_2_Rel1, Release; `servo_test.uf2` SHA-256 `F3D71AA06FD3A89D05A34E7B92946599BD11ED4EB13B17E08D71C8D3F4F53285`. Owner reported servo connected, linkage detached, motor and servo power off during flash. Logs in ignored `bench-logs/servo/`. | Flashed via BOOTSEL. First serial open received no banner; toggling DTR succeeded. Six status responses and DTR reconnect reported disarmed, requested pulse zero, GP2 commanded low, motor inputs commanded low and GP14 untouched. COM7 closed. No arm or pulse was sent; GPIO voltage, waveform and motion were not measured. 3.3 V servo signal compatibility remains unverified. |
+| 2026-11-01 | One unloaded servo burst | Same image; owner approved one exploratory `pulse 1500` despite unverified 3.3 V signal compatibility; regulated 4.8 V servo supply on, motor power off, linkage detached. | Console reported active PWM then burst completion and disarmed/low command. Owner observed shaft rotation and switched servo power off. No voltage, waveform, direction or mechanical limits were measured. |
+| 2026-11-01 | Horn-visible 1500 us reference | Same image; unloaded horn installed, motor power off, servo supply on; one armed burst. | Owner reported the horn stayed perpendicular to the servo body. Console reported completion and disarmed/low command; servo supply remained on. Direction, actual timing and mechanical center remain unverified. |
+| 2026-11-01 | Unloaded 1550 us direction step | Same image; one separately approved burst after the 1500 us reference. | Owner reported slight counterclockwise horn movement viewed from the horn face, with sound during motion. Final command disarmed/low; servo power remained on. Actual pulse timing, angle, linkage direction and limits were not measured. |
+| 2026-11-01 | Unloaded 1450 us reverse step | Same image; one separately approved burst after 1550 us, with motor power off and servo supply on. | Owner reported clockwise movement to nearly perpendicular, without continued buzzing or binding. Final command disarmed/low; servo supply remained on. Physical angle, waveform and endpoints remain unmeasured. |
+| 2026-11-01 | Unloaded 1400 us lower step | Same image; one separately approved burst after 1450 us, with motor power off and servo supply on. | Owner reported the horn slightly off perpendicular, direction uncertain, without continued buzzing or binding. Final command disarmed/low; servo supply remained on. Angle, waveform and endpoints remain unmeasured. |
+| 2026-11-01 | Unloaded endpoint sweep | Widened 544-2400 us image, SHA-256 `AD42D709E8BADADFF7FDC8D9821E606890B6F690CDBB20A1DCA957A91BB449A6`; unloaded horn, servo supply on, motor power off. | 544 and 2400 us each reached about parallel to the body on opposite sides, quietly and without stalling; about 180 degrees total. Lower pulse = clockwise from horn face. Midpoint 1472 us is near perpendicular. Mechanical end stops beyond the tested range not located. Visual estimates only. |
 | TBD | Bluetooth library readiness | Current bench sequence above; all actuator power disconnected, automatic pairing/reconnect expected | Not run |
 | TBD | Output-only UART baseline and electrical checks | Procedure above; owner-reported P1 wiring, VM disconnected; USB stdio and commands removed | Pending UART TX logs, operation without a listener, physical GPIO measurements, and reset observations |
 | TBD | Bluetooth/controller compatibility | Dependencies pinned, 8BitDo Micro D-input selected; actual pairing, mapping, report timing and persistence evidence pending | Not run |

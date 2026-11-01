@@ -53,6 +53,15 @@ manual one-shot pulses, not Bluetooth or closed-loop control. See
 for electrical gates, build commands, console commands and acceptance checks.
 The default `whiskey_wagon` image remains inhibited-only with USB stdio disabled.
 
+An optional **servo-only USB bench image** is also available for supervised
+bring-up. It starts disarmed and emits no pulses until an explicit command;
+the owner reports the SG92R connected; unloaded it sweeps about 180 degrees
+over the tested 544-2400 us range, with a working center at the 1472 us
+midpoint (mechanical end stops not located). Steering travel limits
+must still be set once the linkage is installed.
+See the [servo test procedure](docs/verification.md#servo-only-usb-bench-test)
+before powering or testing the servo.
+
 ## Repository layout
 
 ```text
@@ -72,6 +81,8 @@ WhiskeyWagon/
         encoder_capture.hpp  Raw capture interface
         right_motor_test.cpp Standalone opt-in USB right-motor bench test
         right_motor_test_logic.hpp One-shot pulse limits and command matching
+        servo_test.cpp       Standalone opt-in USB servo bench test
+        servo_test_logic.hpp Servo arming, pulse limits and command matching
         btstack_config.h     SDK BTstack feature/buffer configuration
         sdkconfig.h          Bluepad32 platform configuration
     CMakeLists.txt           Project and firmware target
@@ -82,7 +93,8 @@ WhiskeyWagon/
 Keep implementation files and private headers in `src/`. Add
 `include/whiskey_wagon/` when there are public library headers, and `tests/` when
 there is testable application logic; empty placeholder directories are not needed.
-Keep SDK code and toolchains outside the repository.
+Keep SDK code and toolchains outside the repository. Locally retained motor
+bench logs are in `bench-logs/motor/`, which is ignored by Git.
 
 ## Prerequisites
 

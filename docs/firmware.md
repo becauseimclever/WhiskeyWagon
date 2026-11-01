@@ -86,6 +86,35 @@ shape, input qualification/loss/late reports, timestamp wrap, stop, normal and
 Y-triggered reversal/dwell, continued-edge timeout, Hall grace/exact silence
 threshold, missing single channel, invalid transitions and latched fault recovery.
 
+## Isolated USB servo test (2026-11-01)
+
+The opt-in `servo_test` image is separate from the Bluetooth POC and motor test.
+It initializes GP2 and the four motor inputs low, leaves GP14 untouched, and
+requires motor power to be disconnected. STBY is therefore uncontrolled, not
+asserted low. USB CDC with DTR is the only command interface.
+USB baud-rate and vendor-interface resets are disabled in this test image;
+use BOOTSEL with actuator power disconnected when changing firmware.
+
+The image starts disarmed without servo pulses. A fresh `arm` permits one
+explicit `pulse NNNN` command for a nominal one-second, 50 Hz pulse train.
+The image accepts 0544-2400 us (four digits, so `pulse 0544`), matching the
+Arduino Servo library's default `attach()` range. The unloaded SG92R swept that
+full range quietly; see the [endpoint test](verification.md#unloaded-endpoint-sweep-2026-11-01).
+The linkage will restrict usable steering travel further. Arming expires after five seconds, and
+a stopped burst requires a 500 ms cooldown before re-arming. The nominal timing
+is compared with the [Adafruit and Arduino Servo references](hardware.md#servo-timing-references);
+the Arduino library is not used by this firmware.
+
+An independent alarm switches GP2 to its low SIO output at burst expiry rather
+than relying on the PWM's buffered compare update. Stop, invalid input and USB
+DTR loss also inhibit the signal and disarm; a 200 ms watchdog resets a stalled
+loop. These mechanisms do not remove servo power, guarantee a mechanical stop,
+or establish reset-time pin behavior. PWM is configured only when the system
+clock supports nominal 1 us counts. Requested pulse timing and the timeout
+still need physical measurement. Compile-time tests cover parsing, boundaries,
+arming, expiry, cooldown and clock configuration; no hardware test is implied.
+See the [servo-only procedure](verification.md#servo-only-usb-bench-test).
+
 ## Current implementation
 
 The original target is `whiskey_wagon`, C++17, with `pico_stdlib`, UART stdio,

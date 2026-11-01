@@ -185,3 +185,31 @@ if(WHISKEY_BUILD_RIGHT_MOTOR_TEST)
     pico_enable_stdio_usb(right_motor_test 1)
     pico_add_extra_outputs(right_motor_test)
 endif()
+
+option(WHISKEY_BUILD_SERVO_TEST "Build the standalone, manually armed USB servo bench test" OFF)
+if(WHISKEY_BUILD_SERVO_TEST)
+    add_library(servo_test_logic_tests OBJECT tests/servo_test_logic_tests.cpp)
+    target_include_directories(servo_test_logic_tests PRIVATE src)
+    target_compile_features(servo_test_logic_tests PRIVATE cxx_std_17)
+    set_target_properties(servo_test_logic_tests PROPERTIES CXX_EXTENSIONS OFF)
+
+    add_executable(servo_test src/servo_test.cpp)
+    target_include_directories(servo_test PRIVATE src)
+    set_target_properties(servo_test PROPERTIES CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+    target_compile_options(servo_test PRIVATE
+        "$<$<COMPILE_LANG_AND_ID:CXX,GNU,Clang>:-Wall;-Wextra;-Wpedantic>"
+    )
+    target_compile_definitions(servo_test PRIVATE
+        PICO_STDIO_USB_CONNECTION_WITHOUT_DTR=0
+        PICO_STDIO_USB_STDOUT_TIMEOUT_US=1000
+        PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=0
+        PICO_ENABLE_USB_RESET_VIA_BAUD_RATE=0
+        PICO_ENABLE_USB_RESET_VIA_VENDOR_INTERFACE=0
+    )
+    target_link_libraries(servo_test PRIVATE pico_stdlib hardware_pwm hardware_watchdog)
+    add_dependencies(servo_test servo_test_logic_tests)
+    pico_set_program_name(servo_test "WhiskeyWagon servo bench test")
+    pico_enable_stdio_uart(servo_test 0)
+    pico_enable_stdio_usb(servo_test 1)
+    pico_add_extra_outputs(servo_test)
+endif()

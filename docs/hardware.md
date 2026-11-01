@@ -2,6 +2,23 @@
 
 ## Wiring status
 
+**Owner update, 2026-11-01:** The SG92R is now connected, with a reported
+regulated 4.8 V servo supply and the linkage detached. Motor and servo power
+were off for flashing. The owner considers the 3.3 V signal likely to work,
+but signal compatibility, actual voltage and PWM timing remain unverified.
+During one explicitly approved unloaded 1500 us burst, the owner observed the
+output shaft rotate and switched servo power off. The owner later fitted an
+unloaded horn; a second 1500 us burst left it stationary and perpendicular to
+the servo body. A subsequent 1550 us burst produced a slight counterclockwise
+movement viewed from the horn face. A later 1450 us burst moved the horn
+clockwise to nearly perpendicular. At 1400 us, the horn was slightly off
+perpendicular and the movement direction was uncertain. A widened sweep then
+reached 544 and 2400 us (Arduino Servo defaults) quietly, about 180 degrees
+total, with lower pulses clockwise. These are the tested range limits, not
+confirmed mechanical end stops; the working center is the 1472 us midpoint. The
+owner reported servo power on and motor power off afterwards. Wagon steering
+mapping and linkage travel remain to be set after installation.
+
 **Owner update, 2026-10-31:** Both GA25-370 drive motors have 171:1 reduction
 gearboxes and are rated at 35 RPM on the output shaft. Steering is an SG92R.
 The nominal implied motor-shaft speed is 35 * 171 = 5985 RPM; this is a rating
@@ -50,9 +67,10 @@ assigning a signal. Never substitute a header number for a GPIO number.
 
 The UART reservation and motor/channel identity are confirmed requirements.
 The selected driver, encoder, and servo GPIOs form wiring plan **P1**; they are not
-electrically verified wiring. Driver wiring is owner-reported as above; servo and
-encoder allocations remain plans. GP14 is wired to STBY but is only driven low
-by the baseline; enabling it remains blocked on electrical verification.
+electrically verified wiring. Driver and servo wiring are owner-reported as above;
+unconfirmed encoder connections remain plans. GP14 was previously reported wired
+to STBY but was disconnected for the latest externally enabled motor tests.
+Controlled enable remains blocked on electrical verification.
 nSLEEP and nFAULT are not exposed; their
 previous reservations are superseded. GP15 is now allocated to the approved
 pairing/wake momentary button, not a driver fault signal.
@@ -65,7 +83,7 @@ pairing/wake momentary button, not a driver fault signal.
 | Left motor / DRV8833 AIN2 | Output | GP7 | 10 | PWM slice 3, channel B |
 | Right motor / DRV8833 BIN1 | Output | GP8 | 11 | PWM slice 4, channel A |
 | Right motor / DRV8833 BIN2 | Output | GP9 | 12 | PWM slice 4, channel B |
-| Breakout STBY | Output, low only | GP14 | 19 | Owner reports connected; verify 3.3 V compatibility, biasing, and reset behavior before powered testing |
+| Breakout STBY | Output, low only | GP14 | 19 | Previously reported connected; disconnected for latest motor tests; compatibility and reset biasing unverified |
 | Left encoder channel A (sensor 1) | Input | GP10 | 14 | Hall switch output; electrical interface TBD |
 | Left encoder channel B (sensor 2) | Input | GP11 | 15 | Hall switch output; verify phase relationship |
 | Right encoder channel A (sensor 1) | Input | GP12 | 16 | Hall switch output; electrical interface TBD |
@@ -226,9 +244,10 @@ on TowerPro's product page.
 
 Reserve PWM slice 1 timing for steering. GP3 shares that slice, and GP18/GP19
 alias its channels; do not allocate them to incompatible PWM timing or duplicate
-servo-channel output. This is a pin/wiring definition only: PWM frequency, pulse
-limits, and 3.3 V signal compatibility still require verification before output
-is enabled. Physical wiring has not been confirmed.
+servo-channel output. PWM frequency, pulse limits, and 3.3 V signal
+compatibility still require verification before routine use. The owner reports
+the servo wiring connected and approved one unloaded exploratory burst on the
+unverified interface; that observation does not establish electrical acceptance.
 
 ### Manufacturer specifications
 
@@ -254,6 +273,34 @@ factory brown ground lead connects to black ground wiring. Factory servo colors
 are component-specific; yellow here is steering signal, not an encoder channel.
 Use the confirmed steering connection table rather than inferring servo functions
 from the motor/encoder wire color standard.
+
+### Servo timing references
+
+[Adafruit's SG92R guide](https://www.adafruit.com/product/169) recommends the
+Arduino Servo library and describes approximately 1000, 1500 and 2000 us as
+nominal end, middle and opposite-end commands. Those values are useful starting
+references, not measured limits for this servo or its steering linkage.
+Adafruit's example identifies an orange control lead; the owner reports a
+yellow control lead on this unit. Verify the actual connector rather than
+transferring colors between examples.
+
+The [Arduino Servo 1.3.0 common header at revision
+`440b319`](https://github.com/arduino-libraries/Servo/blob/440b319ec11ea2664df8ce201c271c935de28a2d/src/Servo.h)
+defines a 1500 us default pulse and a 20000 us minimum refresh interval.
+The [generic attach API](https://github.com/arduino-libraries/Servo/blob/440b319ec11ea2664df8ce201c271c935de28a2d/docs/api.md#attach)
+describes configurable limits with 544 and 2400 us defaults. These are library
+defaults. On this unloaded SG92R, 544-2400 us produced about 180 degrees of
+travel with no stall at either end (see the
+[endpoint sweep](verification.md#unloaded-endpoint-sweep-2026-11-01));
+its 1472 us midpoint is the working center. Pulses beyond that range were not
+tested, so mechanical end stops are unconfirmed. Linkage limits are still required.
+
+Our Pico SDK test independently uses a nominal 20000 us frame and accepts
+544-2400 us for a one-second, manually armed burst. Unlike an attached Arduino
+Servo instance, it does not continuously refresh the servo after the burst.
+The Arduino library is a timing reference only, not a dependency or copied code.
+The servo responds reliably to the Pico's 3.3 V signal in these bench tests;
+the waveform itself has not been measured.
 
 ## Power and wiring constraints
 

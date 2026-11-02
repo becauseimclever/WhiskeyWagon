@@ -96,7 +96,7 @@ pico_enable_stdio_uart(whiskey_wagon 1)
 pico_enable_stdio_usb(whiskey_wagon 0)
 pico_add_extra_outputs(whiskey_wagon)
 
-option(WHISKEY_BUILD_POC "Build the separate open-loop wagon POC image" ON)
+option(WHISKEY_BUILD_POC "Build the separate closed-loop wagon POC image" ON)
 option(WHISKEY_POC_ACTUATORS_VERIFIED
     "Enable POC outputs ONLY after verifying controlled STBY, both Halls, mapping, cadence and servo limits" OFF)
 option(WHISKEY_POC_EXTERNAL_STBY_BENCH
@@ -107,6 +107,8 @@ set(WHISKEY_POC_REPORT_TIMEOUT_MS 500 CACHE STRING "POC report lease, 100-2000 m
 set(WHISKEY_POC_SERVO_LEFT_US 1400 CACHE STRING "POC physical-left pulse; verify with linkage disconnected")
 set(WHISKEY_POC_SERVO_CENTER_US 1500 CACHE STRING "POC center pulse; not a measured SG92R calibration")
 set(WHISKEY_POC_SERVO_RIGHT_US 1600 CACHE STRING "POC physical-right pulse; verify mechanical limits")
+set(WHISKEY_POC_MAX_WHEEL_RPM 35 CACHE STRING "Closed-loop full-demand wheel speed, 5-37 rpm")
+set(WHISKEY_POC_STEER_LOCK_DEG 30 CACHE STRING "Front-beam angle at a servo endpoint, 5-60 degrees; calibrate after assembly")
 option(WHISKEY_POC_LEFT_INVERTED "Invert left motor electrical polarity in POC" OFF)
 option(WHISKEY_POC_RIGHT_INVERTED "Invert right motor electrical polarity in POC" OFF)
 if((WHISKEY_POC_ACTUATORS_VERIFIED OR WHISKEY_POC_EXTERNAL_STBY_BENCH) AND NOT WHISKEY_BUILD_POC)
@@ -124,7 +126,8 @@ if(WHISKEY_BUILD_POC)
         message(FATAL_ERROR "Powered POC requires WHISKEY_ENCODER_CAPTURE_VERIFIED=ON for BOTH motors")
     endif()
     add_library(poc_configuration INTERFACE)
-    foreach(setting MAX_DUTY_PERMILLE ACCELERATION_MS REPORT_TIMEOUT_MS SERVO_LEFT_US SERVO_CENTER_US SERVO_RIGHT_US)
+    foreach(setting MAX_DUTY_PERMILLE ACCELERATION_MS REPORT_TIMEOUT_MS SERVO_LEFT_US SERVO_CENTER_US SERVO_RIGHT_US
+            MAX_WHEEL_RPM STEER_LOCK_DEG)
         if(NOT WHISKEY_POC_${setting} MATCHES "^[0-9]+$")
             message(FATAL_ERROR "WHISKEY_POC_${setting} must be an integer")
         endif()
@@ -154,7 +157,7 @@ if(WHISKEY_BUILD_POC)
     target_link_libraries(whiskey_wagon_poc PRIVATE
         pico_stdlib hardware_pwm hardware_watchdog bluepad32 poc_configuration)
     add_dependencies(whiskey_wagon_poc bench_logic_tests poc_logic_tests)
-    pico_set_program_name(whiskey_wagon_poc "WhiskeyWagon open-loop POC")
+    pico_set_program_name(whiskey_wagon_poc "WhiskeyWagon closed-loop POC")
     pico_set_program_version(whiskey_wagon_poc "${PROJECT_VERSION}")
     option(WHISKEY_POC_USB_CONSOLE
         "Bench only: send POC diagnostics to USB CDC instead of UART0; output-only, no commands" OFF)

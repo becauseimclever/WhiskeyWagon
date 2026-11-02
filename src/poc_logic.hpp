@@ -1,5 +1,6 @@
 #pragma once
 
+#include "drive_regulator.hpp"
 #include "encoder_capture.hpp"
 #include "poc_config.hpp"
 
@@ -19,17 +20,17 @@ constexpr uint32_t edge_age_ms(uint32_t now, uint64_t last_edge_us)
     return age < 0 ? 0 : static_cast<uint32_t>(age);
 }
 
-constexpr PocOutputs poc_outputs(float drive, float steering, bool servo_enabled)
+// Maps wagon-forward wheel duty to electrical motor duty and steering to the servo pulse.
+constexpr PocOutputs poc_outputs(std::array<int, 2> forward_duty, float steering, bool enabled)
 {
     PocOutputs outputs;
-    const int duty = static_cast<int>(drive * kPocMaxDuty);
+    if (!enabled) return outputs;
     for (unsigned int motor = 0; motor < outputs.motor_permille.size(); ++motor)
-        outputs.motor_permille[motor] = kMotorInverted[motor] ? -duty : duty;
-    if (servo_enabled) {
-        const int travel = steering < 0 ? static_cast<int>(kServoCenterUs) - kServoLeftUs
-                                       : static_cast<int>(kServoRightUs) - kServoCenterUs;
-        outputs.servo_us = static_cast<uint16_t>(kServoCenterUs + steering * travel);
-    }
+        outputs.motor_permille[motor] = kMotorInverted[motor] ? -forward_duty[motor]
+                                                              : forward_duty[motor];
+    const int travel = steering < 0 ? static_cast<int>(kServoCenterUs) - kServoLeftUs
+                                   : static_cast<int>(kServoRightUs) - kServoCenterUs;
+    outputs.servo_us = static_cast<uint16_t>(kServoCenterUs + steering * travel);
     return outputs;
 }
 
@@ -115,10 +116,15 @@ public:
         control_.tick(elapsed, hold_drive, kPocAccelerationMs);
         if (control_.drive() != 0) last_direction_ = control_.drive() > 0 ? 1 : -1;
         if (was_driving && control_.drive() == 0) zero_since_ms_ = now;
+        regulator_.update(control_.drive(), control_.steering(),
+                          {encoders[0].counts.tentative_position,
+                           encoders[1].counts.tentative_position},
+                          elapsed, kPocMaxDuty);
         if (!monitor_hall) return;
-        const int duty = static_cast<int>(magnitude(control_.drive()) * kPocMaxDuty);
         for (unsigned int motor = 0; motor < encoders.size(); ++motor) {
             const auto& sample = encoders[motor];
+            const int wheel_duty = regulator_.wheel(motor).duty();
+            const int duty = control_.drive() == 0 ? 0 : wheel_duty < 0 ? -wheel_duty : wheel_duty;
             const uint32_t invalid = sample.counts.invalid_transitions;
             if (duty && invalid != previous_invalid_[motor]) {
                 fault_motor_ = static_cast<int>(motor);
@@ -167,8 +173,13 @@ public:
     constexpr uint32_t max_idle_overrun_ms() const { return max_idle_overrun_ms_; }
     constexpr PocOutputs outputs() const
     {
-        return poc_outputs(drive(), steering(), !sleeping_ && fault_ == PocFault::kNone);
+        // Zero drive (release complete, Y coast, loss, fault) bypasses the regulator.
+        std::array<int, 2> duty = {};
+        if (control_.drive() != 0)
+            duty = {regulator_.wheel(0).duty(), regulator_.wheel(1).duty()};
+        return poc_outputs(duty, steering(), !sleeping_ && fault_ == PocFault::kNone);
     }
+    constexpr const DriveRegulator& regulator() const { return regulator_; }
 
 private:
     constexpr void fail(PocFault fault)
@@ -177,6 +188,7 @@ private:
         control_.sleep();
     }
     BenchControl control_;
+    DriveRegulator regulator_;
     PocFault fault_ = PocFault::kNone;
     int fault_motor_ = -1;
     uint32_t idle_overruns_ = 0;

@@ -1,21 +1,21 @@
 # Firmware design
 
-## Open-loop wagon POC (2026-10-31)
+## Closed-loop wagon POC (2026-10-31, regulator 2026-11-02)
 
 `whiskey_wagon_poc` is a separate target sharing the existing Bluetooth adapter,
 10 ms BTstack control timer, pairing persistence/lifecycle and button precedence.
 The original `whiskey_wagon` target retains its inhibited-only assertion and
 does not configure motor or servo PWM. No image was flashed for this draft.
 
-The owner selected an open-loop first POC pending calibration. Two motor
+The owner first selected an open-loop POC pending calibration, then chose to evolve
+it into the product. Two motor
 profiles in `poc_config.hpp` record 6 V, 150 mA running / 500 mA stall,
 164:1 reduction (tachometer-derived; labeled 171:1) and 35 RPM rated output.
-The Hall encoders give 44 x4 counts per motor revolution; the `hall` status line
-reports live `motor_rpm` and `wheel_rpm` (one decimal) from count deltas between
-status prints. They are measurement only, not a speed setpoint or regulator.
-Wheel coupling and loaded speed remain unknown. Both motors receive equal bounded duty, with
-independent polarity inversion. There is no speed regulator or differential
-mixing until encoder/steering geometry calibration supports them.
+The Hall encoders give 44 x4 counts per motor revolution (7,216 per wheel
+revolution; the GT2 belt drive is 1:1). The `hall` status line reports live
+`motor_rpm` and `wheel_rpm` (one decimal) from count deltas between status prints.
+Both wheels are speed-regulated from their encoders, with a steering differential;
+see [closed-loop drive](#closed-loop-drive).
 
 `poc_logic.hpp` wraps the existing smoothstep demand ramps and adds:
 
@@ -49,7 +49,8 @@ mixing until encoder/steering geometry calibration supports them.
   for 2000 ms latch a fault. Demand ramps stay at zero while waiting, with
   steering still updating. No edges is not proof of mechanical rest.
 - Powered-only Hall guards: any newly observed invalid transition at nonzero
-  drive duty faults; at duty >=100 permille, a 500 ms absence of either channel
+  wheel duty faults; at wheel duty >=100 permille (each motor's actual regulated
+  duty), a 500 ms absence of either channel
   on either motor faults, after a 500 ms monitoring startup grace. These are
   conservative provisional bench thresholds, not validated fault coverage.
   Low-duty silence is not diagnosed. Single-channel toggling is not treated as
@@ -76,6 +77,48 @@ the first control tick starts the verified center pulse; sleep/fault stops pulse
 Y output changes are applied in the input callback as well as on the next tick.
 PWM compare writes are buffered by the SDK until the next PWM wrap.
 
+### Closed-loop drive
+
+`drive_regulator.hpp` runs every 10 ms control tick after the demand ramps:
+
+- **Targets.** Drive demand (-1..1, still shaped by the smoothstep ramps) times
+  `WHISKEY_POC_MAX_WHEEL_RPM` is the outside-wheel target. The front beam pivots
+  on the centerline, so the turn center lies on the rear-axle line at
+  R = wheelbase / tan(angle). The angle is the smoothed steering state times
+  `WHISKEY_POC_STEER_LOCK_DEG`. The inside wheel target is
+  outside × (R − track/2) / (R + track/2), clamped at zero, so there are no
+  pivot turns. Geometry comes from the Fusion "Wagon - Modular Assembly" model:
+  350 mm wheelbase, 316 mm rear track, a 1:1 servo-to-beam parallelogram, and a
+  right front wheel that reaches the battery enclosure at about 35°. At the
+  default 30° lock the inside wheel runs at 58.6% of the outside wheel.
+  Negative steering is left.
+- **Speed measurement.** Count deltas over a 5-tick (50 ms) window, signed so
+  that wagon-forward is positive (`kEncoderSign` and the inversion options).
+  Resolution is about 0.17 wheel rpm.
+- **Per-wheel control.** Feedforward from the measured full-duty wheel speed
+  (38.0 left / 39.0 right rpm), plus PI correction (Kp 20 permille/rpm, Ki 60
+  permille/rpm·s). The correction is limited to +300 permille above
+  feedforward, so dead feedback cannot push past feedforward + 300; the Hall
+  guards then fault within 500 ms. The integral is held while the output is
+  pinned (anti-windup). Duty never opposes the requested direction:
+  overspeed coasts, and slowing is by the ramps and coasting.
+- **Sync governor.** If a wheel saturates and its fraction of target falls more
+  than 3% behind the other wheel's, both targets are scaled down at up to
+  2/s. The weaker wheel then sets the pace and the commanded left/right ratio
+  holds. The scale recovers at 1/s once neither wheel is saturated. With the
+  default 25% duty cap the governor holds both wheels near the speed that cap
+  allows (about 9.5 rpm).
+- **Bypass and faults.** Zero drive (release complete, Y coast, lease loss,
+  sleep or fault) outputs zero immediately and resets the integrators. Encoder
+  faults still latch, coast both wheels and require a reboot.
+- **Status.** The status `drive` line reports `target_rpm_x10`,
+  `measured_rpm_x10`, `wheel_duty`, `saturated`, `sync_scale_pct`, `max_rpm`
+  and `steer_lock_deg`.
+
+Compile-time tests simulate first-order motors (150 ms time constant) with
+mismatched and saturating plants, turns, reverse, dead feedback and overspeed.
+Gains are provisional until loaded tests on the assembled wagon.
+
 ### POC configuration and verification gate
 
 `WHISKEY_BUILD_POC` defaults ON, but both powered-output options default OFF:
@@ -98,6 +141,8 @@ does not attest reset-time inhibition or the other unverified integration gates.
 | `WHISKEY_POC_SERVO_LEFT_US` | 1400 | Provisional physical-left endpoint, not a manufacturer-approved linkage limit |
 | `WHISKEY_POC_SERVO_CENTER_US` | 1500 | Provisional center; establish horn alignment with linkage disconnected |
 | `WHISKEY_POC_SERVO_RIGHT_US` | 1600 | Provisional physical-right endpoint; endpoints can be reversed |
+| `WHISKEY_POC_MAX_WHEEL_RPM` | 35 | Wheel speed at full demand, allowed 5-37. Owner choice; the left motor reaches only about 38 rpm unloaded at full duty, so headroom under load is small |
+| `WHISKEY_POC_STEER_LOCK_DEG` | 30 | Front-beam angle at either servo endpoint, allowed 5-60; drives the differential. Calibrate after assembly |
 | `WHISKEY_POC_LEFT_INVERTED`, `WHISKEY_POC_RIGHT_INVERTED` | OFF | Change independently after measuring physical-forward polarity with lifted wheels |
 | `WHISKEY_POC_USB_CONSOLE` | OFF | Bench only: route the same output-only diagnostics to USB CDC instead of UART0 when no UART adapter is available. No commands; output requires DTR and is dropped without a host. USB baud-rate/vendor resets are disabled, so use BOOTSEL to reflash |
 
@@ -304,8 +349,8 @@ Independent encoder-based closed-loop wheel-speed control is required, alongside
 servo steering. Differential targets reduce the inside wheel's speed and retain
 the requested outside-wheel speed, without pivot turns. Base the differential
 on the smoothed/calibrated steering state to avoid stepping wheel targets ahead
-of steering. The actual geometry-to-speed relationship and regulator algorithm
-remain to be selected and tested.
+of steering. The POC implementation is described in
+[closed-loop drive](#closed-loop-drive); gains and geometry still need loaded tuning.
 Each motor has two Hall switch channels. Verify their electrical interface and
 phase relationship before choosing a quadrature decoder or deriving direction.
 Measured motion must remain separate from commanded speed, including at zero

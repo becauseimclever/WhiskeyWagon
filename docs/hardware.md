@@ -52,6 +52,20 @@ Those tests used external STBY enable with GP14 disconnected; controlled GP14
 enable and left Hall capture remain unverified. The integrated POC defaults to
 inhibited outputs and does not supersede electrical acceptance.
 
+**Wagon geometry, 2026-11-02 (Fusion "Wagon - Modular Assembly v19", read-only):**
+rear drive wheels are 160 mm in diameter, with center planes 316 mm apart, on split
+half-shafts. Each wheel is driven by a 1:1 GT2 belt from its motor (four identical
+16 mm pulleys), so 35 wheel rpm is about 0.29 m/s. The front is a beam axle
+with 100 mm wheels that pivots on a center spacer on the centerline, 350 mm
+ahead of the rear axle. The SG92R sits 50 mm behind the pivot. A double-ended
+±20 mm horn drives a ±20 mm beam arm through two 50 mm links, a parallelogram,
+so the beam angle equals the horn angle. Swept clearance in the model: the right
+front wheel reaches the battery enclosure at about 35° of beam swing, and the
+left wheel reaches the electronics enclosure at about 52°. The firmware's
+default 30° lock follows the 1172/1472/1772 us bench endpoints (±300 us, about
+±29° on an SG92R). Confirm the actual endpoints and mechanical clearance after
+assembly.
+
 **Owner update, 2026-10-30:** Right motor is now wired and powered, with both
 right Hall channels connected. Owner confirmed GP8/GP9, GP14 and GP12/GP13
 assignments, reported 3.3 V interfaces, and confirmed a secured/lifted wheel with

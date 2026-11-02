@@ -1,3 +1,5 @@
+#include <algorithm>
+
 #include "poc_logic.hpp"
 
 using namespace whiskey_wagon;
@@ -19,15 +21,17 @@ constexpr bool profile_and_output_tests()
         if (motor.gearbox_reduction != 164 || motor.rated_output_rpm != 35 ||
             motor.supply_mv != 6000 || motor.running_ma != 150 || motor.stall_ma != 500)
             return false;
-    const auto forward = poc_outputs(1, -1, true);
-    const auto reverse = poc_outputs(-1, 1, true);
+    const int full = kPocMaxDuty;
+    const auto forward = poc_outputs({full, full}, -1, true);
+    const auto reverse = poc_outputs({-full, -full}, 1, true);
     for (unsigned int motor = 0; motor < 2; ++motor)
         if (forward.motor_permille[motor] != (kMotorInverted[motor] ? -kPocMaxDuty : kPocMaxDuty) ||
             reverse.motor_permille[motor] != -forward.motor_permille[motor])
             return false;
+    const auto disabled = poc_outputs({full, full}, 1, false);
     return forward.servo_us == kServoLeftUs && reverse.servo_us == kServoRightUs &&
-           poc_outputs(0, 0, true).servo_us == kServoCenterUs &&
-           poc_outputs(0, 1, false).servo_us == 0;
+           poc_outputs({}, 0, true).servo_us == kServoCenterUs && disabled.servo_us == 0 &&
+           disabled.motor_permille[0] == 0 && disabled.motor_permille[1] == 0;
 }
 static_assert(profile_and_output_tests());
 
@@ -52,7 +56,9 @@ constexpr bool configured_acceleration_tests()
         }
         if (control.drive() != direction) return false;
         const auto outputs = control.outputs();
-        const auto expected = poc_outputs(direction, 0, true);
+        // No encoder motion: the regulator pushes to its limit, which here is the duty cap.
+        const int full = direction * static_cast<int>(kPocMaxDuty);
+        const auto expected = poc_outputs({full, full}, 0, true);
         for (unsigned int motor = 0; motor < outputs.motor_permille.size(); ++motor)
             if (outputs.motor_permille[motor] != expected.motor_permille[motor]) return false;
         for (uint32_t elapsed = 1; elapsed <= 700; ++elapsed) {
@@ -212,7 +218,9 @@ constexpr bool exact_threshold_and_wrap_tests()
     for (uint32_t now = 10; now <= 2000; now += 10) {
         hall.report({true}, now);
         hall.tick(now, 10, {}, true);
-        if (!threshold_start && magnitude(hall.drive()) * kPocMaxDuty >= kHallMonitoringDuty)
+        const auto duty = hall.outputs().motor_permille;
+        const auto largest = std::max(duty[0] < 0 ? -duty[0] : duty[0], duty[1] < 0 ? -duty[1] : duty[1]);
+        if (!threshold_start && largest >= kHallMonitoringDuty)
             threshold_start = now;
         if (threshold_start && now == threshold_start + kHallSilenceMs - 10 &&
             hall.fault() != PocFault::kNone) return false;
@@ -360,3 +368,119 @@ constexpr bool quiet_link_tests()
            faulted.drive() == 0;
 }
 static_assert(quiet_link_tests());
+
+constexpr bool near(float value, float expected, float tolerance)
+{
+    return value >= expected - tolerance && value <= expected + tolerance;
+}
+
+// First-order wheel model: full_rpm at 1000 permille forward duty, 150 ms time constant.
+struct WheelPlant {
+    float full_rpm;
+    float rpm = 0;
+    float counts = 0;
+    constexpr void step(int duty, uint32_t ms)
+    {
+        const float seconds = static_cast<float>(ms) / 1000;
+        rpm += (full_rpm * static_cast<float>(duty) / 1000 - rpm) * seconds / 0.15f;
+        counts += rpm * static_cast<float>(kEncoderCountsPerMotorRev *
+                                           kDriveMotorProfiles[0].gearbox_reduction) *
+                  seconds / 60;
+    }
+};
+
+constexpr int64_t raw_position(float forward_counts, unsigned int wheel)
+{
+    return static_cast<int64_t>(forward_counts) * kEncoderSign[wheel] *
+           (kMotorInverted[wheel] ? -1 : 1);
+}
+
+constexpr DriveRegulator run_drive(std::array<WheelPlant, 2>& plants, float drive,
+                                   float steering, uint32_t ms)
+{
+    DriveRegulator regulator;
+    for (uint32_t t = 0; t < ms; t += 10) {
+        regulator.update(drive, steering,
+                         {raw_position(plants[0].counts, 0), raw_position(plants[1].counts, 1)},
+                         10, 1000);
+        for (unsigned int wheel = 0; wheel < 2; ++wheel)
+            plants[wheel].step(regulator.wheel(wheel).duty(), 10);
+    }
+    return regulator;
+}
+
+constexpr bool regulator_sync_tests()
+{
+    // Mismatched motors under different loads still hold the same commanded speed.
+    std::array<WheelPlant, 2> plants = {{{36}, {40}}};
+    const auto straight = run_drive(plants, 1, 0, 3000);
+    if (!near(plants[0].rpm, kMaxWheelRpm, 0.5f) || !near(plants[1].rpm, kMaxWheelRpm, 0.5f) ||
+        !near(straight.wheel(0).rpm(), plants[0].rpm, 0.5f) || straight.scale() != 1)
+        return false;
+    std::array<WheelPlant, 2> reverse = {{{36}, {40}}};
+    run_drive(reverse, -0.5f, 0, 3000);
+    if (!near(reverse[0].rpm, -kMaxWheelRpm / 2, 0.5f) ||
+        !near(reverse[1].rpm, -kMaxWheelRpm / 2, 0.5f))
+        return false;
+    // A wheel that cannot reach the target holds the other back to its speed.
+    std::array<WheelPlant, 2> weak = {{{30}, {40}}};
+    const auto limited = run_drive(weak, 1, 0, 4000);
+    return limited.scale() < 1 && weak[0].rpm > 28 && near(weak[1].rpm, weak[0].rpm, 1.5f);
+}
+static_assert(regulator_sync_tests());
+
+constexpr bool differential_tests()
+{
+    if (!near(sin_small(kPi / 6), 0.5f, 1e-4f) || !near(cos_small(kPi / 3), 0.5f, 1e-4f))
+        return false;
+    if (inside_wheel_ratio(0) != 1 || inside_wheel_ratio(-1) != inside_wheel_ratio(1) ||
+        inside_wheel_ratio(1) <= 0 || inside_wheel_ratio(0.5f) <= inside_wheel_ratio(1))
+        return false;
+    // 30 degree beam: R = 350 / tan 30 = 606 mm, inside/outside = (606 - 158) / (606 + 158).
+    if (kSteerLockDeg == 30 && !near(inside_wheel_ratio(1), 0.5865f, 0.001f)) return false;
+    const auto left = wheel_targets(1, -1);
+    const auto reverse_right = wheel_targets(-1, 1);
+    if (left[1] != kMaxWheelRpm || !(left[0] > 0 && left[0] < left[1]) ||
+        reverse_right[0] != -kMaxWheelRpm ||
+        !(reverse_right[1] < 0 && reverse_right[1] > reverse_right[0]))
+        return false;
+    std::array<WheelPlant, 2> plants = {{{38}, {39}}};
+    run_drive(plants, 1, -1, 3000);
+    return near(plants[0].rpm, kMaxWheelRpm * inside_wheel_ratio(1), 0.5f) &&
+           near(plants[1].rpm, kMaxWheelRpm, 0.5f);
+}
+static_assert(differential_tests());
+
+constexpr bool regulator_limit_tests()
+{
+    // Dead feedback never pushes past feedforward plus the bounded correction.
+    DriveRegulator dead;
+    for (uint32_t t = 0; t < 3000; t += 10) {
+        dead.update(0.5f, 0, {0, 0}, 10, 1000);
+        for (unsigned int wheel = 0; wheel < 2; ++wheel) {
+            const float limit = kMaxWheelRpm / 2 / kFullDutyWheelRpm[wheel] * 1000 + kMaxCorrection;
+            if (dead.wheel(wheel).duty() <= 0 || static_cast<float>(dead.wheel(wheel).duty()) > limit)
+                return false;
+        }
+    }
+    // Overspeed (downhill or pushed) coasts rather than driving against the direction.
+    DriveRegulator fast;
+    for (uint32_t t = 0; t <= 500; t += 10) {
+        const float counts = static_cast<float>(t) * 10;
+        fast.update(0.2f, 0, {raw_position(counts, 0), raw_position(counts, 1)}, 10, 1000);
+    }
+    if (fast.wheel(0).duty() != 0 || fast.wheel(1).duty() != 0) return false;
+    fast.update(0, 0, {raw_position(5100, 0), raw_position(5100, 1)}, 10, 1000);
+    if (fast.wheel(0).duty() != 0 || fast.wheel(0).target() != 0) return false;
+    // Y coast zeroes the motor outputs at once, without waiting for a control tick.
+    PocControl control;
+    control.report({}, 0);
+    for (uint32_t now = 10; now <= 500; now += 10) {
+        control.report({true}, now);
+        control.tick(now, 10, {}, false);
+    }
+    if (control.outputs().motor_permille[0] == 0) return false;
+    control.report({true, false, true}, 501);
+    return control.outputs().motor_permille[0] == 0 && control.outputs().motor_permille[1] == 0;
+}
+static_assert(regulator_limit_tests());

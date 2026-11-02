@@ -7,9 +7,10 @@ steering servo, two DRV8833-driven motors, and Hall-effect motor encoders.
 ## First wagon POC (2026-10-31)
 
 The separate `whiskey_wagon_poc` image now implements Bluetooth drive commands,
-bounded open-loop PWM for both 6 V GA25-370 motors, and SG92R steering on GP2.
-The motor profile records **171:1 reduction and 35 RPM rated output-shaft speed**.
-These specifications do not establish encoder resolution or measured wheel RPM.
+per-wheel encoder speed regulation with a steering differential for both 6 V
+GA25-370 motors, and SG92R steering on GP2. The motor profile records a
+**164:1 measured reduction (labeled 171:1) and 35 RPM rated output-shaft speed**;
+full demand targets 35 wheel rpm.
 
 Both motors passed the latest powered pulse test after harness repair; left Hall
 capture and physical-forward polarity remain unverified. STBY was externally
@@ -214,7 +215,7 @@ unverified; these are measurements for calibration, not certified position.
 Motor output remains inhibited even in this variant.
 
 Hand-turn measured gearbox-output revolutions to establish counts using the
-171:1 motor-shaft reduction. Until the counting convention/resolution are
+164:1 measured motor-shaft reduction (labeled 171:1). Until the counting convention/resolution are
 verified, no RPM or stopped/moving assertion is produced. Powered speed-loop
 tuning, stall/feedback-fault detection and calibrated servo output are a later
 stage, not accessible through a runtime command or a motor-enable build switch.

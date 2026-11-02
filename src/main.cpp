@@ -178,6 +178,16 @@ void print_status(uint64_t now)
            static_cast<long>(std::abs(wheel_rpm[0]) % 10),
            wheel_rpm[1] < 0 ? "-" : "", static_cast<long>(std::abs(wheel_rpm[1]) / 10),
            static_cast<long>(std::abs(wheel_rpm[1]) % 10));
+    const auto& regulator = control.regulator();
+    const auto tenths = [](float rpm) { return static_cast<long>(rpm * 10); };
+    printf("drive target_rpm_x10=%ld,%ld measured_rpm_x10=%ld,%ld wheel_duty=%d,%d "
+           "saturated=%u,%u sync_scale_pct=%ld max_rpm=%ld steer_lock_deg=%ld\n",
+           tenths(regulator.wheel(0).target()), tenths(regulator.wheel(1).target()),
+           tenths(regulator.wheel(0).rpm()), tenths(regulator.wheel(1).rpm()),
+           regulator.wheel(0).duty(), regulator.wheel(1).duty(),
+           regulator.wheel(0).saturated(), regulator.wheel(1).saturated(),
+           static_cast<long>(regulator.scale() * 100), static_cast<long>(kMaxWheelRpm),
+           static_cast<long>(kSteerLockDeg));
 #endif
 #else
     printf("status uptime_ms=%llu mode=INHIBITED_ONLY link=%s bluetooth=%s connected=%u "
@@ -331,9 +341,9 @@ int main()
     stdout_uart_init();
 #endif
 #if WHISKEY_WAGON_POC
-    printf("WhiskeyWagon OPEN_LOOP_POC; actuators=%s; console=%s; stby=%s; gp14=%s; "
-           "no measured RPM or speed regulation.\n"
-           "Motors: 6 V, 171:1, rated output 35 rpm; running/stall 150/500 mA each.\n"
+    printf("WhiskeyWagon CLOSED_LOOP_POC; actuators=%s; console=%s; stby=%s; gp14=%s; "
+           "per-wheel encoder speed regulation with steering differential.\n"
+           "Motors: 6 V, 164:1 measured, rated output 35 rpm; running/stall 150/500 mA each.\n"
            "duty_cap=%u acceleration_ms=%lu report_lease_ms=%lu servo_us=%u,%u,%u; "
            "calibration required.\n",
            WHISKEY_POC_EXTERNAL_STBY_BENCH ? "ENABLED_EXTERNAL_STBY_BENCH_ONLY" :

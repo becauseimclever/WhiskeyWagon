@@ -1110,6 +1110,32 @@ measured wheel RPM, speed regulation, calibrated differential turns or electrica
 protection. No-edge reversal qualification does not prove the wheels stopped.
 Keep powered tests supervised and bench-only until these remaining gates pass.
 
+### Closed-loop drive bench test
+
+Run this after the
+[closed-loop drive](firmware.md#closed-loop-drive) change, with the wheels
+lifted and the physical cutoff within reach. Start the serial capture before
+the controller connects, and watch the `drive` status line.
+
+1. Hold B, then X, each for at least 10 s with the stick centered. Both
+   `measured_rpm_x10` values should settle near the 350 target within about
+   2%, and match each other within about 3%. Check one output shaft or wheel
+   with the tachometer. Look for oscillation, hunting or overshoot on start-up.
+2. Hold B at full left and then full right stick. The inside wheel should
+   settle near 58.6% of the outside wheel (about 20.5 vs 35 rpm at the 30°
+   default lock), and the outside wheel should stay at the requested speed.
+   Repeat with X.
+3. Gently drag one wheel by hand or against a soft surface while holding B.
+   `sync_scale_pct` should drop so the other wheel slows with it, and recover
+   after release. Stop if anything binds.
+4. Press Y, then release B. The outputs should go to coast immediately,
+   bypassing the regulator.
+5. Disconnect the controller once while driving. The stop should match the
+   recorded link-loss behavior.
+
+Gains, lock angle, steering direction and the low-speed correction limit are
+bench values only; retune them on the assembled, loaded wagon.
+
 ## Thresholds required before integrated motion
 
 Record numerical values and their justification in the owning documents:
@@ -1166,6 +1192,8 @@ software test candidates, not accepted hardware limits.
 | 2026-11-01 | Wheel-revolution tap count and live rpm readout | `build-poc-external` image SHA-256 `A92B02F9B3164A04662B50DD02F40460300CED71867FEE1BB37E0CFD0BC4A37D` (adds `motor_rpm`/`wheel_rpm` to the `hall` line); wheels lifted, full duty. Log: ignored `bench-logs/rpm-20261101-181724.log`. | The owner held B and tapped the unmapped L shoulder (`buttons=0x0011`) once per right-wheel revolution (14 taps). Interpolating right counts across the first 13 taps (12 revolutions in 18.34 s) gave 39.3 wheel rpm and about 7,192 x4 counts per wheel revolution, a 163.5:1 ratio (about +/-1 from tap timing). This confirms the firmware's 164:1. The live readout showed about 6,300/6,440 motor rpm and 38.4/39.2 wheel rpm (left/right). Fault 2 (left Hall silent) latched at 18:18:11 while both motors were turning at about 6,300 rpm. Cause: edge age `now - last_edge_ms` wrapped when the newest edge was stamped after the control-clock read. Fixed by clamping to zero (`edge_age_ms`), with a compile-time regression test that fails on the old formula. |
 | 2026-11-01 | Hall edge-age fix soak | `build-poc-external` image SHA-256 `918DD4EAB756C0E764DC7652AF6DC29FF51FF8BE2DD6DF236EF22556595C9B54`; wheels lifted, full duty. Log: ignored `bench-logs/edge-fix-20261101-182048.log`. | Held B for about 60 s and X for about 30 s, then feathered B for about 15 s. No faults. Steady holds measured 38.6-38.7 / 39.5-39.6 wheel rpm (left/right). Feathering dipped duty to 95-99% between taps but held 37.8-38.4 / 38.6-39.2 wheel rpm, within about 2% of steady. The owner perceived feathering as not reaching full speed. |
 | 2026-11-01 | Controller loss during held drive | Same image; owner-reported, no capture. | With drive held, the motors kept running for about 20 s after the controller dropped out before stopping. This matches the 20 s default Bluetooth supervision timeout on the controller-initiated link. Radio-loss stop latency is therefore not bounded by the 500 ms lease; the physical cutoff remains the backstop. |
+| 2026-11-02 | Closed-loop regulator and differential build | `build-poc-external` and `build`, no compiler warnings; compile-time tests added for regulator sync (mismatched plants, reverse, weak-wheel governor), the steering differential (30° gives an inside ratio of 0.5865) and limits (dead feedback, overspeed, Y). A mutation check that disabled the governor failed the sync test as expected. Bench image SHA-256 `B41E2EC217BDAF9F6926A33BE5A9C45F179BFA4FD1DC462D3FFE3A59A31EF0DE` | Passed builds and tests only; not flashed |
+| 2026-11-02 | Closed-loop drive bench test | Same image flashed, wheels lifted, no load. Log: ignored `bench-logs/closed-loop-20261101-190220.log`. | Owner reported everything working. B and X held: measured 34.4-35.6 / 34.4-35.9 wheel rpm against a 35.0 target, with left/right within 0.3 rpm at steady state; duty about 93% / 91%, so about 7% headroom unloaded. Full left: 20.5 / 35.0 rpm; full right: 35.0 / 20.5 rpm, matching the 0.586 inside ratio. Start-up overshoot was at most about 1 rpm, with no hunting. Y and release dropped duty to 0 immediately and the wheels coasted. No faults. The governor (`sync_scale_pct`) was not exercised because neither wheel saturated for long. Loaded tracking, gains and the steering direction on the assembled wagon remain unverified. |
 | TBD | Hardware and motion verification | P1 driver wiring owner-reported; electrical interface and powered operation not verified | Not run |
 
 After the external-STBY test, the owner reported an open or intermittent

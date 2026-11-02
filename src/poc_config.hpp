@@ -42,6 +42,27 @@ inline constexpr uint32_t kReversalTimeoutMs = 2000;
 inline constexpr uint32_t kHallSilenceMs = 500;
 inline constexpr uint16_t kHallMonitoringDuty = 100;
 inline constexpr uint32_t kControlOverrunMs = 100;
+
+// Wagon geometry from the Fusion "Wagon - Modular Assembly" model: rear wheel center planes
+// 316 mm apart, the front beam pivots on the centerline 350 mm ahead of the rear axle, and
+// the servo drives it through a 1:1 parallelogram, so beam angle equals horn angle.
+inline constexpr float kWheelbaseMm = 350;
+inline constexpr float kRearTrackMm = 316;
+inline constexpr float kSteerLockDeg = WHISKEY_POC_STEER_LOCK_DEG;
+inline constexpr float kMaxWheelRpm = WHISKEY_POC_MAX_WHEEL_RPM;
+// Lifted, unloaded wheel rpm at full duty (2026-11-01 bench); feedforward only.
+inline constexpr std::array<float, 2> kFullDutyWheelRpm = {38.0f, 39.0f};
+// Both encoders count down while their motor runs at positive electrical duty.
+inline constexpr std::array<int, 2> kEncoderSign = {-1, -1};
+inline constexpr uint32_t kSpeedWindowTicks = 5;
+inline constexpr float kSpeedKp = 20;         // permille per wheel rpm of error
+inline constexpr float kSpeedKi = 60;         // permille per wheel rpm-second of error
+inline constexpr float kMaxCorrection = 300;  // closed-loop authority above feedforward
+inline constexpr float kSyncTolerance = 0.03f;
+inline constexpr float kSyncDropPerSecond = 2;
+inline constexpr float kSyncRecoverPerSecond = 1;
+static_assert(kSteerLockDeg >= 5 && kSteerLockDeg <= 60);
+static_assert(kMaxWheelRpm >= 5 && kMaxWheelRpm <= 37);
 static_assert(kPocMaxDuty >= kHallMonitoringDuty && kPocMaxDuty <= 1000);
 static_assert(kPocAccelerationMs >= 100 && kPocAccelerationMs <= 1000);
 static_assert(kPocReportTimeoutMs >= 100 && kPocReportTimeoutMs <= 2000);

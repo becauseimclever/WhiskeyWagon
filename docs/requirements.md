@@ -5,8 +5,11 @@
 **First-draft milestone, 2026-10-31:** Owner selected an open-loop Bluetooth/PWM/
 SG92R POC with Hall diagnostics and powered outputs gated on bench verification.
 This is a temporary bring-up milestone; REQ-11 closed-loop regulation and REQ-12
-calibrated differential turning remain final requirements, not implemented POC
-features. Motor ratings confirmed today: 171:1 reduction, 35 RPM output shaft.
+calibrated differential turning remain final requirements. **2026-11-02:** the
+owner chose to evolve the POC into the product; it now implements both, pending
+loaded tuning (see [closed-loop drive](firmware.md#closed-loop-drive)).
+Motor ratings confirmed 2026-10-31: labeled 171:1 reduction (tachometer-measured
+164:1 on 2026-11-01), 35 RPM output shaft.
 
 | ID | Requirement | Verification |
 | --- | --- | --- |
@@ -32,11 +35,10 @@ features. Motor ratings confirmed today: 171:1 reduction, 35 RPM output shaft.
   must distinguish commanded demand from observed motion, including movement
   after demand reaches zero. No encoder edges alone do not prove a wheel is
   stopped if feedback has failed or motion is below the measurement resolution.
-- Encoders are on the motor shafts, before the owner-specified 171:1 reduction.
-  Once counts per motor revolution and counting convention are measured, gearbox
-  output counts per revolution are that count multiplied by 171. Wheel coupling
-  still needs verification. Electrical interface, channel phase and resolution
-  will be determined by tests; encoder failure must stop both motors.
+- Encoders are on the motor shafts, before the gearbox (labeled 171:1, measured
+  164:1). The encoders give 44 x4 counts per motor revolution, so a gearbox
+  output revolution is 7,216 counts. The GT2 belt to each wheel is 1:1.
+  Encoder failure must stop both motors.
 - Differential speed targets slow the inside wheel while retaining the requested
   speed of the outside wheel; no pivot turns. Geometry, steering-to-speed
   relationship, encoder calibration, control-loop tuning and fault handling
@@ -160,7 +162,7 @@ Resolve these before implementing or testing the affected feature.
 | DEC-07 | Steering endpoints, center, inversion, pulse timing, and loss-of-control behavior | Smooth movement/centering, provisional 0.5 s travel; controller loss and opposing D-pad directions return smoothly to center; calibration/interpolation TBD |
 | DEC-08 | Motor PWM frequency, inversion, limits, acceleration/reversal policy | Provisional 1.0 s acceleration and 0.7 s release deceleration approved; reversals pass through zero; PWM, duty/speed limits, profile, reversal dwell and physical validation TBD |
 | DEC-09 | Stop/fault behavior, command timeout, watchdog timing, and input qualification | No arm/disarm; Y coasts, controller loss releases buttons, encoder failure immediately coasts both until reboot; preview ramps/release qualification implemented; detection thresholds, powered behavior and running watchdog TBD |
-| DEC-10 | Closed-loop differential wheel-speed control | Required per-wheel encoder feedback; slow inside wheel, outside stays at requested speed, no pivot turns; geometry/mixing law, speed estimator, gains, thresholds and feedback-fault behavior TBD |
+| DEC-10 | Closed-loop differential wheel-speed control | Implemented 2026-11-02: 50 ms windowed encoder speed, feedforward + PI per wheel with anti-windup and bounded correction, a sync governor that holds the left/right ratio when a wheel saturates, and a whole-beam steering differential (350 mm wheelbase, 316 mm track, tunable lock angle). Gains, lock angle and loaded behavior still need tuning on the assembled wagon |
 | DEC-11 | Pairing authorization, reconnect behavior, and maximum active controllers | Bench implementation: automatic pairing/reconnect, >30 s fallback, 60 s window, GP15 2 s hold/short-press wake reboot, software sleep; first ready gamepad wins, repeated holds do not extend window; one device slot; on-board verification pending |
 | DEC-12 | Exact dependency revisions and acquisition method | Resolved for initial build: approved Bluepad32 5.0.0-beta0 pinned via CMake FetchContent and SDK 2.3.1 BTstack; see dependency register; radio/controller validation pending |
 

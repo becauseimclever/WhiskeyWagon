@@ -174,14 +174,15 @@ public:
         drive_.reset();
         steering_.reset();
     }
-    constexpr void tick(uint32_t elapsed_ms, bool hold_drive = false)
+    constexpr void tick(uint32_t elapsed_ms, bool hold_drive = false,
+                        uint32_t acceleration_ms = 1000)
     {
         float target = static_cast<float>(winner_);
         if (target * drive_.value() < 0) {
             target = 0;
         }
         const bool slowing = target == 0;
-        drive_.update(target, hold_drive ? 0 : elapsed_ms, slowing ? 700 : 1000);
+        drive_.update(target, hold_drive ? 0 : elapsed_ms, slowing ? 700 : acceleration_ms);
         steering_.update(steering_target_, elapsed_ms, 500);
     }
     constexpr float drive() const { return drive_.value(); }

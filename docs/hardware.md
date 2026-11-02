@@ -2,6 +2,20 @@
 
 ## Wiring status
 
+**Owner update, 2026-11-01:** GP14 is disconnected. The owner initially
+reported STBY tied to the 6 V VM supply, then reported moving STBY to 3.3 V
+with the VM tie removed. The owner identified the motor-driver IC as DRV8833,
+confirmed both Hall interfaces are 3.3 V-safe, and has a motor-power cutoff
+within reach. Motor and servo power were off for flashing and the wheels were
+lifted. During the subsequent test the owner observed only the right wheel turn;
+motor power is now off.
+The breakout listing specifies STBY at 0-5 V, while the
+[TI DRV8833 datasheet](https://www.ti.com/lit/ds/symlink/drv8833.pdf)
+specifies a 5.75 V recommended maximum for digital inputs. The breakout's
+STBY-to-IC circuit is unverified, so do not assume a 6 V STBY connection is
+within those limits. The current wiring and voltages are owner-reported, not
+independently measured.
+
 **Owner update, 2026-11-01:** The SG92R is now connected, with a reported
 regulated 4.8 V servo supply and the linkage detached. Motor and servo power
 were off for flashing. The owner considers the 3.3 V signal likely to work,
@@ -24,6 +38,15 @@ gearboxes and are rated at 35 RPM on the output shaft. Steering is an SG92R.
 The nominal implied motor-shaft speed is 35 * 171 = 5985 RPM; this is a rating
 calculation, not a measured speed or encoder calibration. Encoder output-shaft
 counts/revolution still require measured motor-shaft counts/revolution * 171.
+
+**Tachometer measurement, 2026-11-01:** Encoder resolution is 44 x4 counts per
+motor-shaft revolution (11 pulses per channel). The tachometer read left
+encoder disc 6160 rpm / output shaft 38 rpm, and right 6460 / 39 rpm. Those
+readings were taken at different times, but both disc readings were within
+about 1% of the encoder-derived speed. The disc/output ratios (about 162 and 166) put the
+effective reduction near 164:1 rather than the 171:1 label; firmware uses
+164:1. A per-revolution tap count of the right wheel (12 revolutions) then measured
+about 7,192 counts per wheel revolution, a ratio of 163.5:1, confirming 164:1.
 The latest simultaneous full-duty pulse passed after left harness repair.
 Those tests used external STBY enable with GP14 disconnected; controlled GP14
 enable and left Hall capture remain unverified. The integrated POC defaults to
@@ -320,14 +343,14 @@ B0H7MZVZ3J](https://www.amazon.com/dp/B0H7MZVZ3J), reviewed 2026-10-24.
 | --- | --- |
 | Model | GA25-370; owner confirmed 2026-10-25, superseding earlier GA24-370 identification |
 | Rated voltage | DC 6 V |
-| Gear reduction | 171:1 |
+| Gear reduction | Labeled 171:1; tachometer-derived about 164:1 (2026-11-01), used by firmware |
 | No-load gearbox output speed | 35 rpm +/-15% (29.75-40.25 rpm); not a loaded speed guarantee |
 | Power | 8 W advertised; electrical input versus mechanical output and operating conditions unspecified |
 | Output shaft | 4 mm diameter, 12 mm length |
 | Motor diameter / total length | 25 mm / 74.8 mm |
 | Running and stall current | Owner-supplied 2026-10-25: 0.15 A running / 0.5 A stall per motor; not measured wagon values |
-| Encoder supply, output interface, resolution | Not provided; tests required |
-| Encoder shaft location | Owner-confirmed motor shaft, before 171:1 gearbox (2026-10-25) |
+| Encoder supply, output interface, resolution | Resolution measured 2026-11-01: 44 x4 counts per motor revolution (11 pulses/channel); supply and interface per bench notes |
+| Encoder shaft location | Owner-confirmed motor shaft, before the gearbox (2026-10-25) |
 
 Do not interpret 8 W / 6 V (about 1.33 A) as a specified running or stall
 current. That calculation assumes electrical input power at a defined operating
@@ -424,14 +447,14 @@ A separate logic converter remains an option if transient testing requires it.
 | Motor A/B wheel identity | Confirmed: A = left, B = right |
 | Motor model and nominal voltage | Owner-confirmed GA25-370, 6 V |
 | Motor current ratings | Owner-supplied 0.15 A running / 0.5 A stall each; actual load/transient validation pending |
-| Gear reduction | Owner-specified: 171:1 (motor shaft to gearbox output) |
+| Gear reduction | Labeled 171:1; tachometer-derived about 164:1 (motor shaft to gearbox output), used by firmware |
 | Gearbox output speed | Listing: 35 rpm +/-15% no-load; not a measured wagon speed or control limit |
 | Motor forward polarity and inversion | TBD per motor |
 | Encoder channel count | Confirmed: two Hall switch channels per motor |
 | Encoder output interface, pull-ups, and phase relationship | TBD per motor |
-| Encoder counts per motor-shaft revolution and counting convention | TBD; distinguish pulses, edges, and quadrature x1/x2/x4 |
-| Encoder shaft location | Owner-confirmed motor shaft, before 171:1 gearbox |
-| Wheel circumference, output-to-wheel coupling, counts per wheel revolution | Coupling/circumference TBD; gearbox output counts per revolution = measured counts per motor revolution x 171, using the same counting convention |
+| Encoder counts per motor-shaft revolution and counting convention | 44 x4 quadrature counts (11 pulses per channel), tachometer-confirmed 2026-11-01 |
+| Encoder shaft location | Owner-confirmed motor shaft, before the gearbox |
+| Wheel circumference, output-to-wheel coupling, counts per wheel revolution | Coupling/circumference TBD; about 7,216 x4 counts per gearbox output revolution (44 x 164) |
 | Measured motor and servo current; approved power limits | TBD |
 
 ## References

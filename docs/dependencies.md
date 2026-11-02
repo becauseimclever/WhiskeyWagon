@@ -104,10 +104,13 @@ lists 8BitDo family support, including Switch and Android modes, but does not
 explicitly list the Micro among tested models. Exact-model compatibility is
 therefore unverified, not guaranteed by family support.
 
-Owner-selected operating mode: D-input, superseding the earlier Switch-mode
-proposal. This is not a measured transport or verified report mapping.
-Record the actual firmware, selected mode, advertised identity, transport, and
-reports before choosing a parser/mapping policy.
+The owner selected X-input for further testing after D-input and a
+reported Switch-mode test did not provide sufficiently fresh held-button
+reports. The observed X-input device identifies as `8BitDo Zero 2 gamepad`
+(045e:02e0), despite the earlier Micro selection; the exact physical model and
+firmware remain unconfirmed. See the [verification record](verification.md)
+for measured transport, mapping, and report timing rather than assuming mode
+compatibility from the advertised name.
 
 The [manufacturer FAQ](https://support.8bitdo.com/faq/micro.html) documents
 selectable D-pad/left-stick/right-stick reporting using Minus plus a D-pad
@@ -124,7 +127,7 @@ It never drives actuators; test with only the intended gamepad discoverable.
 
 ## Remaining integration sequence
 
-1. Record the selected Micro's firmware in the approved D-input mode; verify
+1. Record the controller's actual model and firmware in X-input mode; verify
    the actual Classic/BLE transport and input reports during bench testing.
 2. Run the firmware's inhibited Bluetooth readiness test with actuator power
    disconnected. Record the exact firmware/build and dependency revisions.

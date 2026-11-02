@@ -99,22 +99,32 @@ pico_add_extra_outputs(whiskey_wagon)
 option(WHISKEY_BUILD_POC "Build the separate open-loop wagon POC image" ON)
 option(WHISKEY_POC_ACTUATORS_VERIFIED
     "Enable POC outputs ONLY after verifying controlled STBY, both Halls, mapping, cadence and servo limits" OFF)
+option(WHISKEY_POC_EXTERNAL_STBY_BENCH
+    "Enable supervised bench outputs with GP14 disconnected and STBY externally enabled; no hardware inhibit" OFF)
 set(WHISKEY_POC_MAX_DUTY_PERMILLE 250 CACHE STRING "POC maximum duty, 100-1000; provisional default 25 percent")
+set(WHISKEY_POC_ACCELERATION_MS 1000 CACHE STRING "POC zero-to-cap acceleration, 100-1000 ms")
 set(WHISKEY_POC_REPORT_TIMEOUT_MS 500 CACHE STRING "POC report lease, 100-2000 ms; verify held-report cadence")
 set(WHISKEY_POC_SERVO_LEFT_US 1400 CACHE STRING "POC physical-left pulse; verify with linkage disconnected")
 set(WHISKEY_POC_SERVO_CENTER_US 1500 CACHE STRING "POC center pulse; not a measured SG92R calibration")
 set(WHISKEY_POC_SERVO_RIGHT_US 1600 CACHE STRING "POC physical-right pulse; verify mechanical limits")
 option(WHISKEY_POC_LEFT_INVERTED "Invert left motor electrical polarity in POC" OFF)
 option(WHISKEY_POC_RIGHT_INVERTED "Invert right motor electrical polarity in POC" OFF)
-if(WHISKEY_POC_ACTUATORS_VERIFIED AND NOT WHISKEY_BUILD_POC)
-    message(FATAL_ERROR "POC output verification requires WHISKEY_BUILD_POC=ON")
+if((WHISKEY_POC_ACTUATORS_VERIFIED OR WHISKEY_POC_EXTERNAL_STBY_BENCH) AND NOT WHISKEY_BUILD_POC)
+    message(FATAL_ERROR "POC output options require WHISKEY_BUILD_POC=ON")
+endif()
+if(WHISKEY_POC_ACTUATORS_VERIFIED AND WHISKEY_POC_EXTERNAL_STBY_BENCH)
+    message(FATAL_ERROR "Controlled and externally enabled STBY modes are mutually exclusive")
 endif()
 if(WHISKEY_BUILD_POC)
-    if(WHISKEY_POC_ACTUATORS_VERIFIED AND NOT WHISKEY_ENCODER_CAPTURE_VERIFIED)
+    set(WHISKEY_POC_OUTPUTS_ENABLED OFF)
+    if(WHISKEY_POC_ACTUATORS_VERIFIED OR WHISKEY_POC_EXTERNAL_STBY_BENCH)
+        set(WHISKEY_POC_OUTPUTS_ENABLED ON)
+    endif()
+    if(WHISKEY_POC_OUTPUTS_ENABLED AND NOT WHISKEY_ENCODER_CAPTURE_VERIFIED)
         message(FATAL_ERROR "Powered POC requires WHISKEY_ENCODER_CAPTURE_VERIFIED=ON for BOTH motors")
     endif()
     add_library(poc_configuration INTERFACE)
-    foreach(setting MAX_DUTY_PERMILLE REPORT_TIMEOUT_MS SERVO_LEFT_US SERVO_CENTER_US SERVO_RIGHT_US)
+    foreach(setting MAX_DUTY_PERMILLE ACCELERATION_MS REPORT_TIMEOUT_MS SERVO_LEFT_US SERVO_CENTER_US SERVO_RIGHT_US)
         if(NOT WHISKEY_POC_${setting} MATCHES "^[0-9]+$")
             message(FATAL_ERROR "WHISKEY_POC_${setting} must be an integer")
         endif()
@@ -136,6 +146,8 @@ if(WHISKEY_BUILD_POC)
     target_compile_definitions(whiskey_wagon_poc PRIVATE
         WHISKEY_WAGON_POC=1
         WHISKEY_POC_ACTUATORS_VERIFIED=$<BOOL:${WHISKEY_POC_ACTUATORS_VERIFIED}>
+        WHISKEY_POC_EXTERNAL_STBY_BENCH=$<BOOL:${WHISKEY_POC_EXTERNAL_STBY_BENCH}>
+        WHISKEY_POC_OUTPUTS_ENABLED=$<BOOL:${WHISKEY_POC_OUTPUTS_ENABLED}>
         WHISKEY_ENCODER_CAPTURE_VERIFIED=$<BOOL:${WHISKEY_ENCODER_CAPTURE_VERIFIED}>
         PICO_DEFAULT_UART=0 PICO_DEFAULT_UART_TX_PIN=0 PICO_DEFAULT_UART_RX_PIN=1
         PICO_DEFAULT_UART_BAUD_RATE=115200)

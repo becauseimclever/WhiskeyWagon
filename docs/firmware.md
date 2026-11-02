@@ -9,9 +9,11 @@ does not configure motor or servo PWM. No image was flashed for this draft.
 
 The owner selected an open-loop first POC pending calibration. Two motor
 profiles in `poc_config.hpp` record 6 V, 150 mA running / 500 mA stall,
-171:1 reduction and 35 RPM rated output. These are supplied specifications;
-35 RPM is not a speed setpoint or measured motion. CPR, wheel coupling, and
-loaded speed remain unknown. Both motors receive equal bounded duty, with
+164:1 reduction (tachometer-derived; labeled 171:1) and 35 RPM rated output.
+The Hall encoders give 44 x4 counts per motor revolution; the `hall` status line
+reports live `motor_rpm` and `wheel_rpm` (one decimal) from count deltas between
+status prints. They are measurement only, not a speed setpoint or regulator.
+Wheel coupling and loaded speed remain unknown. Both motors receive equal bounded duty, with
 independent polarity inversion. There is no speed regulator or differential
 mixing until encoder/steering geometry calibration supports them.
 
@@ -19,12 +21,29 @@ mixing until encoder/steering geometry calibration supports them.
 
 - B/X/Y release qualification and fresh-press precedence, unchanged from preview.
   Y immediately sets both drive demands to zero; steering continues normally.
+- Configurable smoothstep acceleration from zero to the duty cap, default 1000 ms.
+  The owner-selected next bench image uses 300 ms and a 1000-permille (100%) cap.
+  Release deceleration remains 700 ms and steering travel remains 500 ms.
 - A provisional 500 ms valid-report lease using the same wrapping 32-bit BTstack
   clock as report timestamps. Expiry/disconnect synthesizes release, so drive
   ramps down and steering centers. A late held report cannot renew old demand.
   A fresh neutral report then fresh drive press is required. The maximum
   nominal full-demand timeout-to-zero is lease + 700 ms + one 10 ms tick.
   This is electrical demand latency, not physical stopping time.
+- Connected-link hold (owner-approved, Exterminate-style): the 8BitDo Zero 2
+  reports only changes, so while the controller stays connected the control
+  tick renews the lease of the last fresh report (`link_alive`). This never
+  creates, qualifies or revives input. Disconnect still releases immediately,
+  but radio loss is only detected by the controller-side Bluetooth supervision
+  timeout (default 20 s; owner-measured about 20 s and accepted 2026-11-01);
+  the physical motor cutoff is the backstop. Attempts
+  to shorten supervision from the Pico (write/readback, master role switch)
+  did not take effect on this controller and were removed.
+- Quiet-link neutral: the Zero 2 sends nothing at connect, so qualification would
+  consume the first press. If no report arrives within 500 ms
+  (`kPocQuietNeutralMs`) after HID readiness, the controller is treated as at
+  rest and the first B/X press drives. A non-neutral report inside that window
+  still blocks driving until released.
 - A 250 ms zero-duty reversal dwell; when Hall monitoring is enabled, both
   motors must also have no edges for 250 ms. Continued edges blocking reversal
   for 2000 ms latch a fault. Demand ramps stay at zero while waiting, with
@@ -59,29 +78,45 @@ PWM compare writes are buffered by the SDK until the next PWM wrap.
 
 ### POC configuration and verification gate
 
-`WHISKEY_BUILD_POC` defaults ON, but `WHISKEY_POC_ACTUATORS_VERIFIED` defaults
-OFF: all motor signals stay low and no servo PWM is configured. Raw Hall
-capture remains separately gated by `WHISKEY_ENCODER_CAPTURE_VERIFIED`.
+`WHISKEY_BUILD_POC` defaults ON, but both powered-output options default OFF:
+all motor signals stay low and no servo PWM is configured. Raw Hall capture
+remains separately gated by `WHISKEY_ENCODER_CAPTURE_VERIFIED`.
 Powered configuration is rejected unless both-motor encoder capture is enabled.
-The output flag is an explicit physical-bench attestation, not auto-detection.
-Do not set it until the [POC procedure](verification.md#first-integrated-poc-bench-test)
-passes its wiring, reset, mapping, cadence, polarity and servo gates.
+`WHISKEY_POC_ACTUATORS_VERIFIED` is an explicit physical-bench attestation,
+not auto-detection; do not set it until the
+[POC procedure](verification.md#first-integrated-poc-bench-test) passes its
+wiring, reset, mapping, cadence, polarity and servo gates. The separate
+external-STBY option acknowledges a supervised test with a physical cutoff; it
+does not attest reset-time inhibition or the other unverified integration gates.
 
 | CMake setting | Default | Meaning / gate |
 | --- | --- | --- |
+| `WHISKEY_POC_EXTERNAL_STBY_BENCH` | OFF | Separate supervised bench mode with external STBY enable and GP14 untouched. Mutually exclusive with `WHISKEY_POC_ACTUATORS_VERIFIED`; both motor Hall interfaces must be verified. Firmware cannot disable STBY; a physical motor-power cutoff is required |
 | `WHISKEY_POC_MAX_DUTY_PERMILLE` | 250 | 25% cap, allowed 100-1000; not a calibrated starting duty. If stationary, stop and investigate; never add an automatic full-duty kick |
-| `WHISKEY_POC_REPORT_TIMEOUT_MS` | 500 | Allowed 100-2000 ms; hold controls and measure cadence before enabling outputs. If unchanged reports are suppressed, this POC cannot sustain drive; do not disable freshness protection |
+| `WHISKEY_POC_ACCELERATION_MS` | 1000 | Zero-to-cap smoothstep ramp, allowed 100-1000 ms; changing acceleration does not change release, steering, reversal dwell or input freshness |
+| `WHISKEY_POC_REPORT_TIMEOUT_MS` | 500 | Allowed 100-2000 ms; report lease, renewed by the connected-link hold while the controller stays connected. Do not disable freshness protection |
 | `WHISKEY_POC_SERVO_LEFT_US` | 1400 | Provisional physical-left endpoint, not a manufacturer-approved linkage limit |
 | `WHISKEY_POC_SERVO_CENTER_US` | 1500 | Provisional center; establish horn alignment with linkage disconnected |
 | `WHISKEY_POC_SERVO_RIGHT_US` | 1600 | Provisional physical-right endpoint; endpoints can be reversed |
 | `WHISKEY_POC_LEFT_INVERTED`, `WHISKEY_POC_RIGHT_INVERTED` | OFF | Change independently after measuring physical-forward polarity with lifted wheels |
 | `WHISKEY_POC_USB_CONSOLE` | OFF | Bench only: route the same output-only diagnostics to USB CDC instead of UART0 when no UART adapter is available. No commands; output requires DTR and is dropped without a host. USB baud-rate/vendor resets are disabled, so use BOOTSEL to reflash |
 
+The 2026-11-01 held-button test in the controller's observed Xbox-compatible
+mode exceeded the lease. A separate inhibited probe received only handshake
+acknowledgments to repeated input `GET_REPORT` requests, with no continued
+held-state reports. Neither acknowledgments nor cached state establish fresh
+input; sustained drive in this mode remains unverified.
+
 Servo values must be distinct, center between endpoints, each 1000-2000 us.
 This validation bounds configuration, not actual servo safety; linkage acceptance
-remains mandatory. GP14 must control STBY with verified reset-time inhibition:
-the externally enabled, GP14-disconnected bench arrangement is not supported
-by the powered POC. UART0 on GP0 remains the default output-only diagnostic
+remains mandatory. The normal powered POC requires GP14 to control STBY with
+verified reset-time inhibition. The separate externally enabled bench mode
+does not provide this protection; its boot banner and heartbeat report
+`stby=UNCONTROLLED gp14=UNTOUCHED`. PWM inputs are commanded low on stop
+or fault, but cannot provide a hardware STBY disable or guarantee reset-time
+inhibition. Follow the [external-STBY procedure](verification.md#externally-enabled-stby-bench-test)
+and keep motor power disconnected outside a supervised test. UART0 on GP0 remains
+the default output-only diagnostic
 interface; `WHISKEY_POC_USB_CONSOLE=ON` substitutes an output-only USB CDC console
 for bench use. Status separates requested duty/servo pulses
 from raw Hall counts and explicitly withholds RPM. Fault numbers:
@@ -147,6 +182,8 @@ The baseline is deliberately **inhibited-only**, not a motion controller:
   After readiness, the lifecycle enables pairing or remembered-address reconnect,
   with the BLE management service disabled. Pairing admits the first ready
   gamepad, reconnect admits only the remembered address using the SDK allowlist.
+  An already-running inquiry stays active when switching between these modes;
+  stopping and immediately restarting it can race BTstack's asynchronous cancel.
 - A versioned application TLV record (`0x57574331`, version + six-byte address)
   records the preferred controller at successful HID readiness. Writes are checked
   and read back; unavailable storage, corrupt records or persistence failures

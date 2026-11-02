@@ -8,8 +8,10 @@
 namespace whiskey_wagon {
 void inhibit_poc_outputs()
 {
+#if !WHISKEY_POC_EXTERNAL_STBY_BENCH
     gpio_put(kStandbyPin, false);
-#if WHISKEY_POC_ACTUATORS_VERIFIED
+#endif
+#if WHISKEY_POC_OUTPUTS_ENABLED
     for (unsigned int motor = 0; motor < 2; ++motor)
         pwm_set_both_levels(pwm_gpio_to_slice_num(kMotorInputPins[motor * 2]), 0, 0);
     pwm_set_gpio_level(kServoPin, 0);
@@ -18,7 +20,7 @@ void inhibit_poc_outputs()
 
 void initialize_poc_outputs()
 {
-#if WHISKEY_POC_ACTUATORS_VERIFIED
+#if WHISKEY_POC_OUTPUTS_ENABLED
     for (unsigned int motor = 0; motor < 2; ++motor) {
         const auto pin = kMotorInputPins[motor * 2];
         auto config = pwm_get_default_config();
@@ -44,9 +46,11 @@ void initialize_poc_outputs()
 
 void apply_poc_outputs(PocOutputs outputs)
 {
-#if WHISKEY_POC_ACTUATORS_VERIFIED
+#if WHISKEY_POC_OUTPUTS_ENABLED
+#if !WHISKEY_POC_EXTERNAL_STBY_BENCH
     const bool driving = outputs.motor_permille[0] || outputs.motor_permille[1];
     if (!driving) gpio_put(kStandbyPin, false);
+#endif
     for (unsigned int motor = 0; motor < 2; ++motor) {
         const int duty = outputs.motor_permille[motor];
         // DRV8833 slow decay: hold one input high and PWM the other, so the off phase
@@ -58,7 +62,9 @@ void apply_poc_outputs(PocOutputs outputs)
         pwm_set_both_levels(pwm_gpio_to_slice_num(kMotorInputPins[motor * 2]), in1, in2);
     }
     pwm_set_gpio_level(kServoPin, outputs.servo_us);
+#if !WHISKEY_POC_EXTERNAL_STBY_BENCH
     if (driving) gpio_put(kStandbyPin, true);
+#endif
 #else
     (void)outputs;
 #endif

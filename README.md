@@ -155,7 +155,7 @@ USB, then copy `whiskey_wagon.uf2` to its mass-storage drive.
   Otherwise only the remembered address is admitted during reconnect; after
   more than 30 seconds disconnected, a 60-second pairing window opens.
   The previous controller can reconnect during pairing. First ready gamepad
-  wins: test with only the intended Micro in D-input mode discoverable.
+  wins: test with only the intended controller in X-input mode discoverable.
 - Hold a dedicated normally-open button between GP15 (header pin 20) and GND
   for 2 seconds to request pairing. Input uses a pull-up and 30 ms debounce.
   Explicit pairing disconnects the current controller. Repeated requests do not

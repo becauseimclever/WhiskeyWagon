@@ -11,6 +11,14 @@ struct PocOutputs {
     uint16_t servo_us = 0;
 };
 
+// The control clock is sampled before the encoder snapshot, so the newest edge can be a
+// millisecond ahead of `now`; treat that as age zero instead of a wrapped huge age.
+constexpr uint32_t edge_age_ms(uint32_t now, uint64_t last_edge_us)
+{
+    const auto age = static_cast<int32_t>(now - static_cast<uint32_t>(last_edge_us / 1000));
+    return age < 0 ? 0 : static_cast<uint32_t>(age);
+}
+
 constexpr PocOutputs poc_outputs(float drive, float steering, bool servo_enabled)
 {
     PocOutputs outputs;
@@ -52,6 +60,26 @@ public:
         control_.report(input);
         if (was_driving && control_.drive() == 0) zero_since_ms_ = now;
     }
+    // Some controllers only report changes. While the controller stays connected, the last
+    // fresh report remains valid until the link drops (bounded only by the controller's
+    // Bluetooth supervision timeout). This never creates or qualifies input and cannot
+    // revive an expired lease.
+    constexpr void link_alive(uint32_t now)
+    {
+        if (fault_ != PocFault::kNone || sleeping_ || !have_report_ ||
+            now - last_report_ms_ >= kPocReportTimeoutMs)
+            return;
+        last_report_ms_ = now;
+    }
+    // Change-only controllers send nothing at connect, so qualification would otherwise
+    // consume the first press. A link that stays quiet past the settle window is at rest.
+    constexpr void quiet_link(uint32_t now, uint32_t connected_ms)
+    {
+        if (fault_ != PocFault::kNone || sleeping_ || have_report_ ||
+            now - connected_ms < kPocQuietNeutralMs)
+            return;
+        report({}, now);
+    }
     constexpr void tick(uint32_t now, uint32_t elapsed,
                         const std::array<EncoderSnapshot, 2>& encoders, bool monitor_hall)
     {
@@ -76,9 +104,7 @@ public:
             if (monitor_hall) {
                 for (const auto& encoder : encoders)
                     hold_drive |= encoder.last_edge_us != 0 &&
-                                  static_cast<uint32_t>(now -
-                                      static_cast<uint32_t>(encoder.last_edge_us / 1000)) <
-                                      kReversalDwellMs;
+                                  edge_age_ms(now, encoder.last_edge_us) < kReversalDwellMs;
             }
             if (hold_drive && now - zero_since_ms_ >= kReversalTimeoutMs) {
                 fail(PocFault::kReversalTimeout);
@@ -86,7 +112,7 @@ public:
             }
         }
         const bool was_driving = control_.drive() != 0;
-        control_.tick(elapsed, hold_drive);
+        control_.tick(elapsed, hold_drive, kPocAccelerationMs);
         if (control_.drive() != 0) last_direction_ = control_.drive() > 0 ? 1 : -1;
         if (was_driving && control_.drive() == 0) zero_since_ms_ = now;
         if (!monitor_hall) return;
@@ -121,7 +147,7 @@ public:
                     return;
                 }
             }
-            const auto edge_age = now - static_cast<uint32_t>(sample.last_edge_us / 1000);
+            const auto edge_age = edge_age_ms(now, sample.last_edge_us);
             if (now - monitoring_since_[motor] >= kHallSilenceMs &&
                 (!sample.last_edge_us || edge_age >= kHallSilenceMs)) {
                 fault_motor_ = static_cast<int>(motor);

@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "bench_logic.hpp"
@@ -34,6 +35,7 @@ LinkLifecycle lifecycle;
 PairButton pairing_button;
 bool lifecycle_started = false;
 bool was_connected = false;
+uint32_t connected_ms = 0;
 uint64_t last_tick_ms = 0;
 uint64_t next_heartbeat_ms = 0;
 BluetoothInput last_logged_input = {};
@@ -130,10 +132,13 @@ void print_status(uint64_t now)
 #if WHISKEY_WAGON_POC
     const auto outputs = control.outputs();
     const auto* input = bluetooth_input();
-    printf("poc t_ms=%llu enabled=%u link=%s lost=%u qualified=%u fault=%u "
+    printf("poc t_ms=%llu enabled=%u stby=%s gp14=%s link=%s lost=%u qualified=%u fault=%u "
            "demand_duty=%d,%d demand_servo_us=%u reports=%lu age_ms=%lu max_gap_ms=%lu "
-           "encoder=%u idle_stalls=%lu max_idle_stall_ms=%lu rpm=UNCALIBRATED\n",
-           static_cast<unsigned long long>(now), WHISKEY_POC_ACTUATORS_VERIFIED,
+           "encoder=%u idle_stalls=%lu max_idle_stall_ms=%lu duty_cap=%u "
+           "acceleration_ms=%lu\n",
+           static_cast<unsigned long long>(now), WHISKEY_POC_OUTPUTS_ENABLED,
+           WHISKEY_POC_EXTERNAL_STBY_BENCH ? "UNCONTROLLED" : "GP14_OUTPUT",
+           WHISKEY_POC_EXTERNAL_STBY_BENCH ? "UNTOUCHED" : "OUTPUT",
            lifecycle_started ? mode_name(lifecycle.mode()) : "starting",
            control.lost(), control.qualified(), static_cast<unsigned int>(control.fault()),
            outputs.motor_permille[0], outputs.motor_permille[1], outputs.servo_us,
@@ -141,16 +146,38 @@ void print_status(uint64_t now)
            static_cast<unsigned long>(btstack_run_loop_get_time_ms() - input->last_report_ms),
            static_cast<unsigned long>(input->max_gap_ms), WHISKEY_ENCODER_CAPTURE_VERIFIED,
            static_cast<unsigned long>(control.idle_overruns()),
-           static_cast<unsigned long>(control.max_idle_overrun_ms()));
+           static_cast<unsigned long>(control.max_idle_overrun_ms()), kPocMaxDuty,
+           static_cast<unsigned long>(kPocAccelerationMs));
 #if WHISKEY_ENCODER_CAPTURE_VERIFIED
     const auto snapshots = encoder_snapshot();
-    printf("hall left_x4=%lld right_x4=%lld invalid=%lu,%lu edge_us=%llu,%llu\n",
+    static std::array<int64_t, 2> previous_position = {};
+    static uint64_t previous_rpm_ms = 0;
+    const auto rpm_elapsed = static_cast<uint32_t>(now - previous_rpm_ms);
+    std::array<int32_t, 2> motor_rpm = {};
+    std::array<int32_t, 2> wheel_rpm = {};
+    for (unsigned int motor = 0; motor < 2; ++motor) {
+        const int64_t delta = snapshots[motor].counts.tentative_position - previous_position[motor];
+        if (previous_rpm_ms != 0) {
+            motor_rpm[motor] = encoder_rpm_tenths(delta, rpm_elapsed);
+            wheel_rpm[motor] = encoder_rpm_tenths(
+                delta, rpm_elapsed, kDriveMotorProfiles[motor].gearbox_reduction);
+        }
+        previous_position[motor] = snapshots[motor].counts.tentative_position;
+    }
+    previous_rpm_ms = now;
+    printf("hall left_x4=%lld right_x4=%lld invalid=%lu,%lu edge_us=%llu,%llu "
+           "motor_rpm=%ld,%ld wheel_rpm=%s%ld.%ld,%s%ld.%ld\n",
            static_cast<long long>(snapshots[0].counts.tentative_position),
            static_cast<long long>(snapshots[1].counts.tentative_position),
            static_cast<unsigned long>(snapshots[0].counts.invalid_transitions),
            static_cast<unsigned long>(snapshots[1].counts.invalid_transitions),
            static_cast<unsigned long long>(snapshots[0].last_edge_us),
-           static_cast<unsigned long long>(snapshots[1].last_edge_us));
+           static_cast<unsigned long long>(snapshots[1].last_edge_us),
+           static_cast<long>(motor_rpm[0] / 10), static_cast<long>(motor_rpm[1] / 10),
+           wheel_rpm[0] < 0 ? "-" : "", static_cast<long>(std::abs(wheel_rpm[0]) / 10),
+           static_cast<long>(std::abs(wheel_rpm[0]) % 10),
+           wheel_rpm[1] < 0 ? "-" : "", static_cast<long>(std::abs(wheel_rpm[1]) / 10),
+           static_cast<long>(std::abs(wheel_rpm[1]) % 10));
 #endif
 #else
     printf("status uptime_ms=%llu mode=INHIBITED_ONLY link=%s bluetooth=%s connected=%u "
@@ -207,6 +234,9 @@ void on_control_tick(btstack_timer_source_t* timer)
     if (std::strcmp(bluetooth_status(), "failed") == 0) {
 #if WHISKEY_WAGON_POC
         inhibit_poc_outputs();
+#if WHISKEY_POC_EXTERNAL_STBY_BENCH
+        panic("Bluetooth failed; motor PWM set to zero; STBY uncontrolled");
+#endif
 #endif
         panic("Bluetooth failed; outputs remain inhibited");
     }
@@ -219,7 +249,10 @@ void on_control_tick(btstack_timer_source_t* timer)
         const auto previous = lifecycle.mode();
         const bool connected = bluetooth_connected();
         if (!sleeping) {
-            if (connected && !was_connected) lifecycle.connected();
+            if (connected && !was_connected) {
+                lifecycle.connected();
+                connected_ms = btstack_run_loop_get_time_ms();
+            }
             if (!connected && was_connected) {
                 control.disconnect();
                 lifecycle.disconnected(now);
@@ -233,20 +266,33 @@ void on_control_tick(btstack_timer_source_t* timer)
         }
         was_connected = bluetooth_connected();
     } else if (now > 15000) {
+#if WHISKEY_WAGON_POC
+        inhibit_poc_outputs();
+#if WHISKEY_POC_EXTERNAL_STBY_BENCH
+        panic("Bluetooth setup not ready after 15 s; motor PWM zero; STBY uncontrolled");
+#endif
+#endif
         panic("Bluetooth setup not ready after 15 s; outputs inhibited; inspect UART boot log");
     }
     if (!sleeping && lifecycle.mode() != LinkMode::kSleeping) {
 #if WHISKEY_WAGON_POC
         const auto previous_fault = control.fault();
-        control.tick(btstack_run_loop_get_time_ms(), elapsed, encoder_snapshot(),
-                     WHISKEY_POC_ACTUATORS_VERIFIED != 0);
+        const uint32_t control_now = btstack_run_loop_get_time_ms();
+        // Change-only controllers stay silent while held; disconnect releases via on_input.
+        if (bluetooth_connected()) {
+            control.quiet_link(control_now, connected_ms);
+            control.link_alive(control_now);
+        }
+        control.tick(control_now, elapsed, encoder_snapshot(),
+                     WHISKEY_POC_OUTPUTS_ENABLED != 0);
         apply_poc_outputs(control.outputs());
         if (control.fault() != previous_fault)
-            printf("ERROR: latched POC fault=%u motor=%s elapsed_ms=%lu; motors coast, "
-                   "servo off; reboot required\n",
+            printf("ERROR: latched POC fault=%u motor=%s elapsed_ms=%lu; motor inputs commanded zero, "
+                   "servo off; stby=%s; reboot required\n",
                    static_cast<unsigned int>(control.fault()),
                    control.fault_motor() == 0 ? "left" : control.fault_motor() == 1 ? "right" : "-",
-                   static_cast<unsigned long>(elapsed));
+                   static_cast<unsigned long>(elapsed),
+                   WHISKEY_POC_EXTERNAL_STBY_BENCH ? "UNCONTROLLED" : "GP14_COMMANDED_LOW");
 #else
         control.tick(elapsed);
 #endif
@@ -266,7 +312,9 @@ void on_control_tick(btstack_timer_source_t* timer)
 
 int main()
 {
+#if !WHISKEY_WAGON_POC || !WHISKEY_POC_EXTERNAL_STBY_BENCH
     initialize_low_output(kStandbyPin);
+#endif
     for (const auto pin : kMotorInputPins) initialize_low_output(pin);
 #if WHISKEY_WAGON_POC
     initialize_low_output(kServoPin);
@@ -283,20 +331,36 @@ int main()
     stdout_uart_init();
 #endif
 #if WHISKEY_WAGON_POC
-    printf("WhiskeyWagon OPEN_LOOP_POC; actuators=%s; console=%s; no measured RPM or speed regulation.\n"
+    printf("WhiskeyWagon OPEN_LOOP_POC; actuators=%s; console=%s; stby=%s; gp14=%s; "
+           "no measured RPM or speed regulation.\n"
            "Motors: 6 V, 171:1, rated output 35 rpm; running/stall 150/500 mA each.\n"
-           "duty_cap=%u report_lease_ms=%lu servo_us=%u,%u,%u; calibration required.\n",
-           WHISKEY_POC_ACTUATORS_VERIFIED ? "ENABLED_SUPERVISED_BENCH_ONLY" : "INHIBITED",
+           "duty_cap=%u acceleration_ms=%lu report_lease_ms=%lu servo_us=%u,%u,%u; "
+           "calibration required.\n",
+           WHISKEY_POC_EXTERNAL_STBY_BENCH ? "ENABLED_EXTERNAL_STBY_BENCH_ONLY" :
+               WHISKEY_POC_OUTPUTS_ENABLED ? "ENABLED_SUPERVISED_BENCH_ONLY" : "INHIBITED",
            WHISKEY_POC_USB_CONSOLE ? "USB_CDC" : "UART0",
-           kPocMaxDuty, static_cast<unsigned long>(kPocReportTimeoutMs),
+           WHISKEY_POC_EXTERNAL_STBY_BENCH ? "UNCONTROLLED" : "GP14_OUTPUT",
+           WHISKEY_POC_EXTERNAL_STBY_BENCH ? "UNTOUCHED" : "OUTPUT",
+           kPocMaxDuty, static_cast<unsigned long>(kPocAccelerationMs),
+           static_cast<unsigned long>(kPocReportTimeoutMs),
            kServoLeftUs, kServoCenterUs, kServoRightUs);
+#if WHISKEY_POC_EXTERNAL_STBY_BENCH
+    printf("WARNING: STBY is externally enabled; PWM zero cannot disable the driver. "
+           "Reset inhibition is unverified; use the physical motor-power cutoff.\n");
+#endif
 #else
     printf("WhiskeyWagon BENCH P1; INHIBITED_ONLY; keep VM/motors disconnected.\n"
            "GP15: momentary to GND, 2 s hold pairs, short press wakes software sleep.\n"
            "D-input Micro: mapping unverified, preview only; no motor PWM or servo pulses.\n");
 #endif
     initialize_encoder_capture();
-    if (!bluetooth_initialize(on_input)) panic("Bluetooth startup failed; motor output inhibited");
+    if (!bluetooth_initialize(on_input)) {
+#if WHISKEY_WAGON_POC && WHISKEY_POC_EXTERNAL_STBY_BENCH
+        panic("Bluetooth startup failed; motor PWM zero; STBY uncontrolled");
+#else
+        panic("Bluetooth startup failed; motor output inhibited");
+#endif
+    }
 #if WHISKEY_WAGON_POC
     watchdog_enable(200, false);
 #endif
@@ -307,6 +371,9 @@ int main()
     btstack_run_loop_execute();
 #if WHISKEY_WAGON_POC
     inhibit_poc_outputs();
+#if WHISKEY_POC_EXTERNAL_STBY_BENCH
+    panic("Bluetooth run loop exited; motor PWM zero; STBY uncontrolled");
+#endif
 #endif
     panic("Bluetooth run loop exited; outputs inhibited");
 }

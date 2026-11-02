@@ -16,7 +16,7 @@ constexpr std::array<EncoderSnapshot, 2> moving_encoders(uint32_t now)
 constexpr bool profile_and_output_tests()
 {
     for (const auto& motor : kDriveMotorProfiles)
-        if (motor.gearbox_reduction != 171 || motor.rated_output_rpm != 35 ||
+        if (motor.gearbox_reduction != 164 || motor.rated_output_rpm != 35 ||
             motor.supply_mv != 6000 || motor.running_ma != 150 || motor.stall_ma != 500)
             return false;
     const auto forward = poc_outputs(1, -1, true);
@@ -30,6 +30,42 @@ constexpr bool profile_and_output_tests()
            poc_outputs(0, 1, false).servo_us == 0;
 }
 static_assert(profile_and_output_tests());
+
+// 4598 counts/s on the left motor matched a 6160-6270 rpm disc tachometer reading.
+static_assert(encoder_rpm_tenths(4598, 1000) == 62700);
+static_assert(encoder_rpm_tenths(-4598, 1000) == -62700);
+static_assert(encoder_rpm_tenths(4598, 1000, 164) == 382);
+static_assert(encoder_rpm_tenths(1000, 0) == 0);
+
+constexpr bool configured_acceleration_tests()
+{
+    for (const int direction : {1, -1}) {
+        PocControl control;
+        control.report({}, 0);
+        const DriveInput input = {direction > 0, direction < 0};
+        for (uint32_t now = 1; now <= kPocAccelerationMs; ++now) {
+            control.report(input, now);
+            control.tick(now, 1, {}, false);
+            if (now < kPocAccelerationMs && magnitude(control.drive()) >= 1) return false;
+            if (kPocAccelerationMs % 2 == 0 && now == kPocAccelerationMs / 2 &&
+                control.drive() != direction * 0.5f) return false;
+        }
+        if (control.drive() != direction) return false;
+        const auto outputs = control.outputs();
+        const auto expected = poc_outputs(direction, 0, true);
+        for (unsigned int motor = 0; motor < outputs.motor_permille.size(); ++motor)
+            if (outputs.motor_permille[motor] != expected.motor_permille[motor]) return false;
+        for (uint32_t elapsed = 1; elapsed <= 700; ++elapsed) {
+            const uint32_t now = kPocAccelerationMs + elapsed;
+            control.report({}, now);
+            control.tick(now, 1, {}, false);
+            if (elapsed == 350 && control.drive() != direction * 0.5f) return false;
+        }
+        if (control.drive() != 0) return false;
+    }
+    return true;
+}
+static_assert(configured_acceleration_tests());
 
 constexpr bool qualification_and_loss_tests()
 {
@@ -143,6 +179,22 @@ constexpr bool fault_tests()
 }
 static_assert(fault_tests());
 
+constexpr bool edge_newer_than_clock_tests()
+{
+    // A fast motor's newest edge can be stamped a millisecond after the control clock read.
+    if (edge_age_ms(1000, 1'001'500) != 0 || edge_age_ms(1000, 400'000) != 600) return false;
+    PocControl control;
+    control.report({}, 0);
+    for (uint32_t now = 10; now <= 3000; now += 10) {
+        auto encoders = moving_encoders(now);
+        for (auto& encoder : encoders) encoder.last_edge_us = (now + 1) * 1000ull;
+        control.report({true}, now);
+        control.tick(now, 10, encoders, true);
+    }
+    return control.fault() == PocFault::kNone && control.drive() == 1;
+}
+static_assert(edge_newer_than_clock_tests());
+
 constexpr bool exact_threshold_and_wrap_tests()
 {
     PocControl control;
@@ -214,13 +266,97 @@ constexpr bool normal_reversal_and_late_report_tests()
     control.tick(1950, 10, {}, false);
     if (control.drive() >= 0) return false;
     // A late held report cannot renew the old command, even before a timeout tick.
-    control.report({false, true}, 1950 + kPocReportTimeoutMs);
+    const uint32_t late = 1950 + kPocReportTimeoutMs;
+    control.report({false, true}, late);
     if (control.qualified()) return false;
-    control.tick(1960 + kPocReportTimeoutMs, 10, {}, false);
+    for (uint32_t elapsed = 10; elapsed <= 700; elapsed += 10)
+        control.tick(late + elapsed, 10, {}, false);
     if (control.drive() != 0) return false;
-    control.report({}, 1961 + kPocReportTimeoutMs);
-    control.report({false, true}, 1962 + kPocReportTimeoutMs);
-    control.tick(1972 + kPocReportTimeoutMs, 10, {}, false);
+    control.report({}, late + 701);
+    control.report({false, true}, late + 702);
+    control.tick(late + 712, 10, {}, false);
     return control.qualified() && control.drive() < 0;
 }
 static_assert(normal_reversal_and_late_report_tests());
+
+constexpr bool connected_link_tests()
+{
+    // A live connected link holds a single fresh press past the report lease.
+    PocControl control;
+    control.link_alive(0);
+    if (!control.lost() || control.qualified()) return false;
+    control.report({}, 0);
+    control.report({true}, 10);
+    for (uint32_t now = 20; now <= 5000; now += 10) {
+        control.link_alive(now);
+        control.tick(now, 10, {}, false);
+    }
+    if (control.lost() || control.drive() != 1) return false;
+    // Link loss without disconnect callback still expires through the lease.
+    for (uint32_t now = 5010; now < 5000 + kPocReportTimeoutMs; now += 10)
+        control.tick(now, 10, {}, false);
+    if (control.lost()) return false;
+    control.tick(5000 + kPocReportTimeoutMs, 10, {}, false);
+    if (!control.lost() || control.qualified()) return false;
+    // A link that becomes alive again cannot revive the expired held input.
+    control.link_alive(5000 + kPocReportTimeoutMs + 10);
+    control.tick(5000 + kPocReportTimeoutMs + 10, 10, {}, false);
+    if (!control.lost()) return false;
+    control.report({true}, 5000 + kPocReportTimeoutMs + 20);
+    if (control.qualified()) return false;
+
+    // Disconnect clears held input even while the link was renewing it.
+    PocControl disconnected;
+    disconnected.report({}, 0);
+    disconnected.report({true}, 10);
+    disconnected.link_alive(2000);
+    disconnected.tick(2000, 10, {}, false);
+    disconnected.disconnect();
+    disconnected.link_alive(2010);
+    for (uint32_t now = 2010; now <= 2800; now += 10)
+        disconnected.tick(now, 10, {}, false);
+    if (!disconnected.lost() || disconnected.drive() != 0) return false;
+
+    // Liveness does not bypass a latched fault.
+    PocControl faulted;
+    faulted.report({}, 0);
+    faulted.report({true}, 10);
+    faulted.tick(20, 10, {}, false);
+    faulted.tick(21 + kControlOverrunMs, kControlOverrunMs + 1, {}, false);
+    faulted.link_alive(30 + kControlOverrunMs);
+    return faulted.fault() == PocFault::kControlOverrun && faulted.drive() == 0;
+}
+static_assert(connected_link_tests());
+
+constexpr bool quiet_link_tests()
+{
+    // A quiet link becomes neutral after the settle window so the first press drives.
+    PocControl control;
+    control.quiet_link(kPocQuietNeutralMs - 1, 0);
+    if (!control.lost() || control.qualified()) return false;
+    control.quiet_link(kPocQuietNeutralMs, 0);
+    if (control.lost() || !control.qualified()) return false;
+    control.report({true}, kPocQuietNeutralMs + 100);
+    control.tick(kPocQuietNeutralMs + 110, 10, {}, false);
+    if (control.drive() <= 0) return false;
+
+    // A held button reported at connect still blocks driving until released.
+    PocControl held;
+    held.report({true}, 10);
+    held.quiet_link(kPocQuietNeutralMs + 10, 0);
+    held.link_alive(kPocQuietNeutralMs + 10);
+    held.tick(kPocQuietNeutralMs + 10, 10, {}, false);
+    if (held.qualified() || held.drive() != 0) return false;
+
+    // Quiet links never bypass a latched fault.
+    PocControl faulted;
+    faulted.report({}, 0);
+    faulted.report({true}, 10);
+    faulted.tick(20, 10, {}, false);
+    faulted.tick(21 + kControlOverrunMs, kControlOverrunMs + 1, {}, false);
+    faulted.disconnect();
+    faulted.quiet_link(30 + kControlOverrunMs + kPocQuietNeutralMs, 0);
+    return faulted.fault() == PocFault::kControlOverrun && faulted.lost() &&
+           faulted.drive() == 0;
+}
+static_assert(quiet_link_tests());

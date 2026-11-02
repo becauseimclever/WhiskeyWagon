@@ -2,10 +2,9 @@
 
 ## Evidence rules
 
-Owner-provided serial heartbeat/help evidence from the earlier interactive
-baseline is recorded below. Updated Bluetooth firmware has not been tested on
-hardware. A successful firmware build is not evidence of safe wiring,
-controller compatibility, or working motion.
+Owner-provided serial heartbeat/help evidence and subsequent Bluetooth and
+actuator bench observations are recorded below. A successful firmware build is
+not evidence of safe wiring, controller compatibility, or working motion.
 
 For each executed test, record date, firmware commit (or explicit dirty-tree
 identifier), board revision, dependency commits, wiring revision, procedure,
@@ -960,7 +959,8 @@ approved controller-loss release behavior before enabling any powered motion.
 
 The first POC is **open-loop and supervised-bench-only**, not the final
 encoder-regulated wagon. Preserve the existing manual motor-test image/procedure.
-Do not flash a powered POC onto the current externally enabled STBY arrangement.
+Do not flash the standard GP14-controlled powered POC onto an externally enabled
+STBY arrangement; use only the separately gated external-STBY bench image below.
 
 ### Tomorrow: controller tests without actuator power
 
@@ -1048,9 +1048,52 @@ cmake -S . -B build-poc-powered -DWHISKEY_BUILD_POC=ON \
 cmake --build build-poc-powered --target whiskey_wagon_poc
 ```
 
+For the owner-approved next bench test on 2026-11-01, increase the cap to 100%
+and shorten zero-to-cap acceleration to 300 ms:
+
+```sh
+cmake -S . -B build-poc-powered -DWHISKEY_POC_MAX_DUTY_PERMILLE=1000 \
+  -DWHISKEY_POC_ACCELERATION_MS=300
+cmake --build build-poc-powered --target whiskey_wagon_poc
+```
+
+Check the heartbeat for `duty_cap=1000 acceleration_ms=300`. Keep wheels lifted
+and stop if a motor remains stationary. The 500 ms report lease, 700 ms release
+deceleration, Y coast, reversal dwell, Hall guards and servo settings are unchanged.
+The preceding re-pair log showed unchanged held-button reports stopping and drive
+qualification expiring; faster acceleration does not fix sustained input freshness.
+
 Swap the left/right endpoints if the horn turns the wrong way once the linkage
 is installed. GP14 must drive STBY in this image; remove any external STBY tie
 with all power off first.
+
+#### Externally enabled STBY bench test
+
+The owner requested GP14 remain disconnected. With all supplies off, move
+STBY's external enable from the 6 V VM rail to 3.3 V; the breakout listing
+specifies STBY 0-5 V. Verify the enable connection and both 3.3 V Hall
+interfaces. Keep the wheels lifted, the servo linkage disconnected and a
+motor-power cutoff within reach. This arrangement leaves the driver enabled
+while STBY is high: firmware cannot lower STBY, and input-zero commands do not
+guarantee reset/brownout inhibition. Do not use it as an installed wagon setup.
+
+```sh
+cmake -S . -B build-poc-external -DWHISKEY_BUILD_POC=ON \
+  -DWHISKEY_POC_ACTUATORS_VERIFIED=OFF -DWHISKEY_POC_EXTERNAL_STBY_BENCH=ON \
+  -DWHISKEY_ENCODER_CAPTURE_VERIFIED=ON -DWHISKEY_POC_USB_CONSOLE=ON \
+  -DWHISKEY_POC_MAX_DUTY_PERMILLE=1000 -DWHISKEY_POC_ACCELERATION_MS=300 \
+  -DWHISKEY_POC_SERVO_LEFT_US=1172 -DWHISKEY_POC_SERVO_CENTER_US=1472 \
+  -DWHISKEY_POC_SERVO_RIGHT_US=1772
+cmake --build build-poc-external --target whiskey_wagon_poc
+```
+
+Flash only with motor power off. Confirm the banner and heartbeat report
+`stby=UNCONTROLLED gp14=UNTOUCHED`, `duty_cap=1000`, and
+`acceleration_ms=300`. The 500 ms controller-report lease, Hall faults,
+700 ms release ramp and Y coast remain enabled. The servo receives its center
+pulse after startup unless sleeping or faulted. Apply motor power only for the
+supervised test, and disconnect it immediately if motion is unexpected or a
+motor remains stationary. Unchanged controller reports may still time out.
 
 Test each direction briefly with lifted wheels, then Y, release, reversal,
 disconnect, pairing sleep and watchdog/reset behavior. Verify actual outputs,
@@ -1110,4 +1153,22 @@ software test candidates, not accepted hardware limits.
 | TBD | Output-only UART baseline and electrical checks | Procedure above; owner-reported P1 wiring, VM disconnected; USB stdio and commands removed | Pending UART TX logs, operation without a listener, physical GPIO measurements, and reset observations |
 | TBD | Bluetooth/controller compatibility | Dependencies pinned, 8BitDo Micro D-input selected; actual pairing, mapping, report timing and persistence evidence pending | Not run |
 | 2026-11-01 | Controller pairing and raw buttons over USB console | `build-poc-usb` image (`WHISKEY_POC_USB_CONSOLE=ON`, actuators inhibited), SHA-256 `19EC66D881DEC084002CF2D629CE3BD6322F5B9B289AE889E48598F86A58F898`; motor and servo power off; owner-reported Micro mode "X-input". Log: ignored `bench-logs/controller-2026-11-01-usb.log`. | Paired over Classic BR/EDR; identified as `8BitDo Zero 2 gamepad`, VID/PID 045e:02e0, detected by Bluepad32 as Xbox Wireless. B=0x0001, A=0x0002, Y=0x0004, X=0x0008, matching candidate B/X/Y masks. D-pad arrived as left-stick axes (left/up -512, right/down +511) with `dpad=0x00`, so the D-pad steering mapping does not work in this mode. Fault 4 (control overrun) was latched before the console connected; cause not yet investigated. Neither report cadence nor persistence was assessed. |
+| 2026-11-01 | External-STBY controller/motor bench test | `build-poc-external` image, SHA-256 `5E4D8D3F941B98B3063F007195FECA04F11E0DDBE6253880FE0285839D6B1205`; 100% duty cap, 300 ms acceleration, USB console. Owner reported STBY moved from VM to 3.3 V, GP14 disconnected, both Hall interfaces 3.3 V-safe, power off for flashing, wheels lifted and physical cutoff available. Log: ignored `bench-logs/poc-external-2026-11-01.log`. | Flashed via BOOTSEL; heartbeat reported `stby=UNCONTROLLED gp14=UNTOUCHED` and the controller connected. B requested 1000 permille for both motors. Right Hall registered -1222 net x4 during the command and -2046 after coast; left net x4 was +1. Fault 2 identified left Hall silence, commanded both inputs zero and stopped servo pulses. Owner observed only the right wheel turn and confirmed motor power off afterward. Actual left input/terminal voltage and Hall channel operation remain unverified. |
+| 2026-11-01 | Post-repair controller integration | Same external-STBY image, after owner reported recrimping the yellow left motor lead and verifying stable continuity on both left leads. Log: ignored `bench-logs/poc-external-post-repair-20261101-122550.log`. | Both Hall net counts changed substantially in forward and reverse, with zero reported invalid transitions and no POC fault during the captured test. Owner observed both wheels turn correctly in forward and reverse and steering respond correctly in both directions. Owner also observed the motors slow or stop before releasing a held drive button; the capture shows report gaps exceeding the 500 ms lease and `lost=1` while the last reported command was non-neutral. Motor power was switched off afterward. Sustained held-command operation remains unverified and is not accepted. |
+| 2026-11-01 | Inhibited HID input-request probe | Temporary USB diagnostic, actuator outputs inhibited, motor and servo power off; controller identified as `8BitDo Zero 2 gamepad` (045e:02e0). Revised probe SHA-256 `1638BBB293B67016A7EFAC16F6F6FF3AAE8C4D5BF6479CAA822A08A1E9D7C0CA`. Log: ignored `bench-logs/hid-repeated-probe-20261101-160859.log`. | The probe sent HID input `GET_REPORT` for report ID 1 every 200 ms. Each observed reply was a one-byte successful handshake, not an input report. The interrupt input-packet count stayed at 16 throughout a B hold and at 48 throughout an X hold, advancing again when the controls changed. This request did not provide fresh held state in the tested mode; the handshake must not renew the input lease. |
+| 2026-11-01 | Owner-reported Switch-mode held-input probe | Same inhibited diagnostic; owner reported changing the controller to S mode for this test, but the capture began after connection and did not independently identify the mode. Log: ignored `bench-logs/switch-mode-probe-20261101-161433.log`. | During a roughly 10-second B hold, the report count stopped increasing after the initial burst and report age exceeded 10 seconds; the 500 ms lease expired. The relationship between this connection and the prior Xbox-compatible identification is unconfirmed. |
+| 2026-11-01 | D-mode pairing and held-input probe | Temporary USB diagnostic with the scan-transition fix, actuator outputs inhibited, motor and servo power off; owner selected D mode. UF2 SHA-256 `D09FDE0D5BAAD0FCBD38578414A7C2A10E95BF2F048F8639B5E7CCA2BF0914B5`. Log: ignored `bench-logs/d-mode-fixed-20261101-162246.log`. | After the reconnect-to-pairing transition, the Pico discovered and paired `8BitDo Zero 2 gamepad` (2dc8:3230) without the prior inquiry-restart error. During the B hold, input reports stopped at 16 after the initial burst; the report age exceeded 8 seconds, and the 500 ms lease expired. Releasing B produced new reports after an 8735 ms gap. The Xbox-specific `GET_REPORT` probe was not active for this device. |
+| 2026-11-01 | D-mode HID input-request probe | Temporary USB diagnostic, actuator outputs inhibited, motor and servo power off; same D-mode controller. UF2 SHA-256 `1EC42E46E36B8733AB88985903E918FB8171E18E88C25C376DC0B3ABFFEA87F4`. Log: ignored `bench-logs/d-mode-request-20261101-162540.log`. | Repeated input `GET_REPORT` requests for the descriptor's report ID 3 received one-byte successful handshakes, not input data. During the B hold, the interrupt input-packet count remained 48 while report age exceeded 6 seconds and the lease expired; the count advanced after release. These acknowledgments cannot renew the input lease. |
+| 2026-11-01 | D-mode periodic-report request | Temporary USB diagnostic, actuator outputs inhibited, motor and servo power off; same D-mode controller. UF2 SHA-256 `487D4D57F73510A3938C3E2693C9359B827B47E70ED651A39B464F268F7473CD`. Log: ignored `bench-logs/d-mode-idle-20261101-163159.log`. | The probe requested a 200 ms HID `SET_IDLE` interval and received a successful handshake, but reports still stopped after the initial B-press burst. The packet count remained 48 during the hold and the lease expired; the release arrived after a 13215 ms gap. The handshake did not establish periodic reports or fresh held state. |
+| 2026-11-01 | X-input fresh-report alternatives | Temporary USB diagnostic, actuator outputs inhibited, motor and servo power off; `8BitDo Zero 2 gamepad` (045e:02e0). UF2 SHA-256 `A9DED35240E4A2CFC818065BE51E296F0EC5E6F912DA157E3F47C30C148EB4A8`. Log: ignored `bench-logs/x-mode-multifresh-20261101-165005.log`. | A 200 ms `SET_IDLE` request received a successful handshake but did not make input reports periodic. `GET_REPORT` with a 64-byte buffer-size field returned `04` (invalid parameter), and repeated zero-magnitude output reports did not elicit fresh input. During the B hold the input-packet count remained 48; the release arrived after a 17459 ms gap and the 500 ms lease expired. |
+| 2026-11-01 | Connected-link hold and quiet-link neutral | `build-poc-external` image, SHA-256 `2A7DD976BBC587AB2367EE142F6238D065D2A529C45C8408DD3404561B5AFBDE`; external STBY, 100% cap, 300 ms acceleration, wheels lifted, cutoff in reach; `8BitDo Zero 2 gamepad` (045e:02e0) in X-input. Logs: ignored `bench-logs/x-mode-latch-20261101-173151.log`, `bench-logs/x-mode-quiet-20261101-173505.log`. | Earlier attempts to confirm a 500 ms link supervision timeout read back 32000 slots and were removed. With the lease renewed while connected, B held for 11 s and X for about 3.5 s sustained 1000 permille and ramped down on release. With quiet-link neutral, the first B press after a hands-off connect drove immediately; owner confirmed. No faults. Controller power-off mid-hold (supervision-timeout stop latency) not yet measured. |
+| 2026-11-01 | Tachometer encoder and gearbox calibration | Same connected-link image, wheels lifted, full duty; optical tachometer. Log: ignored `bench-logs/tach-20261101-180641.log`. | Tachometer: left disc 6160 rpm, left output 38 rpm; right disc 6460 rpm, right output 39 rpm. Steady encoder rates were left about 4,590-4,620 and right about 4,700-4,710 x4 counts/s, giving 44 counts per motor revolution (disc readings within about 1%). Disc/output ratios of about 162 and 166 indicate about 164:1, not the labeled 171:1; firmware now uses 164:1. Readings were not simultaneous and the wheels cannot be hand-turned, so the ratio is approximate. Speeds rose 1-2% over the first 10 s. |
+| 2026-11-01 | Wheel-revolution tap count and live rpm readout | `build-poc-external` image SHA-256 `A92B02F9B3164A04662B50DD02F40460300CED71867FEE1BB37E0CFD0BC4A37D` (adds `motor_rpm`/`wheel_rpm` to the `hall` line); wheels lifted, full duty. Log: ignored `bench-logs/rpm-20261101-181724.log`. | The owner held B and tapped the unmapped L shoulder (`buttons=0x0011`) once per right-wheel revolution (14 taps). Interpolating right counts across the first 13 taps (12 revolutions in 18.34 s) gave 39.3 wheel rpm and about 7,192 x4 counts per wheel revolution, a 163.5:1 ratio (about +/-1 from tap timing). This confirms the firmware's 164:1. The live readout showed about 6,300/6,440 motor rpm and 38.4/39.2 wheel rpm (left/right). Fault 2 (left Hall silent) latched at 18:18:11 while both motors were turning at about 6,300 rpm. Cause: edge age `now - last_edge_ms` wrapped when the newest edge was stamped after the control-clock read. Fixed by clamping to zero (`edge_age_ms`), with a compile-time regression test that fails on the old formula. |
+| 2026-11-01 | Hall edge-age fix soak | `build-poc-external` image SHA-256 `918DD4EAB756C0E764DC7652AF6DC29FF51FF8BE2DD6DF236EF22556595C9B54`; wheels lifted, full duty. Log: ignored `bench-logs/edge-fix-20261101-182048.log`. | Held B for about 60 s and X for about 30 s, then feathered B for about 15 s. No faults. Steady holds measured 38.6-38.7 / 39.5-39.6 wheel rpm (left/right). Feathering dipped duty to 95-99% between taps but held 37.8-38.4 / 38.6-39.2 wheel rpm, within about 2% of steady. The owner perceived feathering as not reaching full speed. |
+| 2026-11-01 | Controller loss during held drive | Same image; owner-reported, no capture. | With drive held, the motors kept running for about 20 s after the controller dropped out before stopping. This matches the 20 s default Bluetooth supervision timeout on the controller-initiated link. Radio-loss stop latency is therefore not bounded by the 500 ms lease; the physical cutoff remains the backstop. |
 | TBD | Hardware and motion verification | P1 driver wiring owner-reported; electrical interface and powered operation not verified | Not run |
+
+After the external-STBY test, the owner reported an open or intermittent
+continuity reading on the yellow left motor lead. The owner subsequently
+recrimped the connection and reported stable continuity on both left motor
+leads. The subsequent powered observations are recorded above.

@@ -153,7 +153,7 @@ static uni_error_t on_device_ready(uni_hid_device_t* device)
     gap_connectable_control(0);
     printf("Bluetooth: controller ready address=%s name=%s vid=%04x pid=%04x; "
 #if WHISKEY_WAGON_POC
-           "release B/X/Y then fresh press; POC mapping must be verified\n",
+           "first press drives once idle 500 ms; POC mapping must be verified\n",
 #else
            "release B/X/Y then press to preview; mapping UNVERIFIED\n",
 #endif
@@ -266,7 +266,8 @@ void bluetooth_set_mode(BluetoothMode next)
         active = NULL;
         input_handler(NULL);
     }
-    uni_bt_stop_scanning_unsafe();
+    // Keep an active inquiry running while changing its allowlist: BTstack
+    // cancels inquiries asynchronously and rejects an immediate restart.
     if (!uni_bt_allowlist_remove_all()) {
         status = "failed";
         printf("error: Bluetooth allowlist reset failed; control shutdown required\n");
